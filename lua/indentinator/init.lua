@@ -1,9 +1,32 @@
--- Minimal event-driven indent guides for Neovim
+---@class IndentinatorConfig
+---@field enabled boolean Whether the plugin is enabled globally or per-buffer
+---@field smart boolean Whether blank lines inherit the indentation guides of neighbouring lines
+---@field char string The character used for drawing the indentation guides
+---@field char_hl string The highlight group for standard guides
+---@field gap_hl string The highlight group for gaps (currently unused but reserved)
+---@field draw_gap_hl boolean Whether gaps should be highlighted
+---@field show_first_indent_level boolean Whether the first indentation level (column 0) should be drawn
+---@field indent_width number|nil Custom indentation width override (if nil, uses shiftwidth/tabstop)
+---@field exclude string[] Filetypes to exclude from drawing guides
+---@field exclude_buftypes string[] Buftypes to exclude from drawing guides
+---@field priority number The priority level of the extmarks used for the guides
+---@field show_current_indent boolean|string Whether to highlight the current scope guide ('only' or boolean)
+---@field current_char_hl string The highlight group for the active guide
+---@field filetypes table<string, table> Per-filetype configuration overrides
+
+---@class IndentinatorState
+---@field enabled table<number, boolean> Enablement status per buffer
+---@field windows table<number, table<number, number[]>> Line range viewport limits tracked per buffer and window
+---@field attached table<number, boolean|number> Attachment status for buffer listeners
+---@field current_indent table<number, number|nil> Active column index tracked per window
+
+-- Minimal event-driven indentation guides for Neovim
 local M = {}
 
 local NS = vim.api.nvim_create_namespace("indentinator")
 local AUGROUP = "Indentinator"
 
+---@type IndentinatorConfig
 M.config = {
   enabled = true,
   smart = false,
@@ -14,11 +37,14 @@ M.config = {
   show_first_indent_level = true,
   indent_width = nil,
   exclude = {},
+  exclude_buftypes = { "terminal", "nofile", "quickfix", "prompt" },
   priority = 100,
   show_current_indent = false,
   current_char_hl = "IndentinatorCurrentGuide",
+  filetypes = {},
 }
 
+---@type IndentinatorState
 local state = {
   enabled = {},
   windows = {},
@@ -26,32 +52,97 @@ local state = {
   current_indent = {},
 }
 
+--- Resolves a configuration option, taking into account filetype-specific overrides.
+---@param buf number The buffer handle
+---@param opt string The configuration key to resolve
+---@return any The resolved configuration value
+local function resolve_config(buf, opt)
+  local ok_ft, ft = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
+  if ok_ft and ft and M.config.filetypes and M.config.filetypes[ft] then
+    local ft_cfg = M.config.filetypes[ft]
+    if ft_cfg[opt] ~= nil then
+      return ft_cfg[opt]
+    end
+  end
+  return M.config[opt]
+end
+
+--- Checks if indentation guides are enabled for the specified buffer.
+---@param buf number The buffer handle
+---@return boolean True if enabled, false otherwise
 local function is_enabled(buf)
   local v = state.enabled[buf]
   if v ~= nil then return v end
+
+  -- Exclude by filetype
   local ok_ft, ft = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
   if not ok_ft or not ft then ft = "" end
-  for _, e in ipairs(M.config.exclude) do
+  local exclude_fts = resolve_config(buf, "exclude") or {}
+  for _, e in ipairs(exclude_fts) do
     if ft == e then return false end
   end
-  return M.config.enabled
+
+  -- Exclude by buftype
+  local ok_bt, bt = pcall(vim.api.nvim_get_option_value, "buftype", { buf = buf })
+  if not ok_bt or not bt then bt = "" end
+  local exclude_bts = resolve_config(buf, "exclude_buftypes") or {}
+  for _, e in ipairs(exclude_bts) do
+    if bt == e then return false end
+  end
+
+  return resolve_config(buf, "enabled")
 end
 
+--- Safely gets a numeric option value from a buffer.
+---@param buf number The buffer handle
+---@param opt string The option name
+---@return number|nil The option value if valid, or nil
 local function get_buf_opt(buf, opt)
   local ok, val = pcall(vim.api.nvim_get_option_value, opt, { buf = buf })
   if ok and type(val) == "number" and val > 0 then return val end
   return nil
 end
 
+--- Computes the indentation width for a given buffer.
+---@param buf number The buffer handle
+---@return number The resolved indentation step width
 local function indent_width(buf)
-  if M.config.indent_width then return M.config.indent_width end
+  local custom_width = resolve_config(buf, "indent_width")
+  if custom_width then return custom_width end
   return get_buf_opt(buf, "shiftwidth") or get_buf_opt(buf, "tabstop") or 8
 end
 
+--- Retrieves the tabstop configuration of a buffer.
+---@param buf number The buffer handle
+---@return number The tabstop size
 local function buffer_tabstop(buf)
   return get_buf_opt(buf, "tabstop") or 8
 end
 
+--- Computes the display width in columns of a leading whitespace substring.
+---@param lead string The leading whitespace characters
+---@param tabstop number The tabstop setting of the buffer
+---@return number The total display column width
+local function lead_display_width(lead, tabstop)
+  local display_col = 0
+  local len = #lead
+  local i = 1
+  while i <= len do
+    local byte = lead:byte(i)
+    if byte == 9 then
+      display_col = display_col + (tabstop - (display_col % tabstop))
+    else
+      display_col = display_col + 1
+    end
+    i = i + 1
+  end
+  return display_col
+end
+
+--- Calculates the active indentation guide column based on the cursor position.
+---@param buf number The buffer handle
+---@param win number The window handle
+---@return number|nil The active column index, or nil if none
 local function get_current_indent_col(buf, win)
   local cursor = vim.api.nvim_win_get_cursor(win)
   local row = cursor[1]
@@ -63,6 +154,7 @@ local function get_current_indent_col(buf, win)
   local text = lines[target_row] or ""
   local lead = text:match("^%s*")
 
+  -- If current line is blank, traverse surrounding lines to determine active context
   if text == "" or lead == text then
     for r = target_row - 1, 1, -1 do
       local t = lines[r]
@@ -93,39 +185,16 @@ local function get_current_indent_col(buf, win)
   local width = indent_width(buf)
   local tabstop = buffer_tabstop(buf)
 
-  local display_col = 0
-  local len = #lead
-  local i = 1
-  while i <= len do
-    local byte = lead:byte(i)
-    if byte == 9 then
-      display_col = display_col + (tabstop - (display_col % tabstop))
-    else
-      display_col = display_col + 1
-    end
-    i = i + 1
-  end
-
+  local display_col = lead_display_width(lead, tabstop)
   local aligned_current = math.floor(display_col / width) * width
 
-  -- Look ahead for the next non-blank line's indentation
+  -- Look ahead for the next non-blank line to detect if current line starts a block
   local next_aligned = nil
   for r = target_row + 1, #lines do
     local t = lines[r]
     local l = t:match("^%s*")
     if t ~= "" and l ~= t then
-      local next_display_col = 0
-      local t_len = #l
-      local j = 1
-      while j <= t_len do
-        local byte = l:byte(j)
-        if byte == 9 then
-          next_display_col = next_display_col + (tabstop - (next_display_col % tabstop))
-        else
-          next_display_col = next_display_col + 1
-        end
-        j = j + 1
-      end
+      local next_display_col = lead_display_width(l, tabstop)
       next_aligned = math.floor(next_display_col / width) * width
       break
     end
@@ -133,18 +202,25 @@ local function get_current_indent_col(buf, win)
 
   local active_col
   if next_aligned and next_aligned > aligned_current then
-    -- Current line starts a deeper scope (e.g. `networking = {`), so highlight its own level
+    -- Current line starts a deeper scope (e.g. block header), highlight its own level
     active_col = aligned_current
   else
-    -- Current line is inside/ending a scope, so highlight the parent scope level
+    -- Current line is inside or closing a scope, highlight parent scope level
     active_col = aligned_current - width
   end
 
   if active_col < 0 then return nil end
-  if active_col == 0 and not M.config.show_first_indent_level then return nil end
+  local show_first = resolve_config(buf, "show_first_indent_level")
+  if active_col == 0 and not show_first then return nil end
   return active_col
 end
 
+--- Computes guide positions for a line based on leading whitespace.
+---@param lead string The leading whitespace
+---@param width number The indentation width
+---@param tabstop number The tabstop size
+---@param show_first boolean Whether to show the first indent guide
+---@return table[]|nil Array of guides with byte and display columns, or nil
 local function guide_cols(lead, width, tabstop, show_first)
   if #lead == 0 then return nil end
   local cols = {}
@@ -160,7 +236,7 @@ local function guide_cols(lead, width, tabstop, show_first)
     end
 
     local byte = lead:byte(i)
-    if byte == 9 then -- '\t'
+    if byte == 9 then
       display_col = display_col + (tabstop - (display_col % tabstop))
     else
       display_col = display_col + 1
@@ -171,6 +247,9 @@ local function guide_cols(lead, width, tabstop, show_first)
   return #cols > 0 and cols or nil
 end
 
+--- Clears the indentation guide extmarks from a specific window viewport.
+---@param buf number The buffer handle
+---@param win number The window handle
 local function clear_window(buf, win)
   local ranges = state.windows[buf]
   if not ranges then return end
@@ -182,6 +261,8 @@ local function clear_window(buf, win)
   end
 end
 
+--- Clears all indentation guide extmarks from all tracked windows for a buffer.
+---@param buf number The buffer handle
 local function clear_window_all(buf)
   if state.windows[buf] then
     for win, r in pairs(state.windows[buf]) do
@@ -192,7 +273,9 @@ local function clear_window_all(buf)
   end
 end
 
--- Main rendering logic: compute and display guides for visible window lines
+--- Renders indentation guides for the visible lines of a buffer in a specific window.
+---@param buf number The buffer handle
+---@param win number The window handle
 local function render(buf, win)
   if not buf or not win or not vim.api.nvim_buf_is_loaded(buf) then return end
   if not is_enabled(buf) then
@@ -215,10 +298,11 @@ local function render(buf, win)
 
   local width = indent_width(buf)
   local tabstop = buffer_tabstop(buf)
-  local show_first = M.config.show_first_indent_level
+  local show_first = resolve_config(buf, "show_first_indent_level")
 
   local active_col = nil
-  if M.config.show_current_indent then
+  local show_current = resolve_config(buf, "show_current_indent")
+  if show_current then
     active_col = get_current_indent_col(buf, win)
     state.current_indent = state.current_indent or {}
     state.current_indent[win] = active_col
@@ -235,7 +319,9 @@ local function render(buf, win)
     end
   end
 
-  if not M.config.smart then
+  -- Fill blank lines if smart mode is active
+  local is_smart = resolve_config(buf, "smart")
+  if not is_smart then
     local k = 1
     local nlines = #lines
     while k <= nlines do
@@ -282,6 +368,7 @@ local function render(buf, win)
     end
   end
 
+  -- Ensure we do not redraw lines occupied by other windows showing the same buffer
   local occupied = {}
   if vim.tbl_count(state.windows[buf] or {}) > 1 then
     for other, r in pairs(state.windows[buf]) do
@@ -293,6 +380,11 @@ local function render(buf, win)
 
   clear_window(buf, win)
 
+  local char = resolve_config(buf, "char")
+  local char_hl = resolve_config(buf, "char_hl")
+  local current_hl = resolve_config(buf, "current_char_hl")
+  local priority = resolve_config(buf, "priority")
+
   for k = 1, #lines do
     local cols = results[k]
     if cols and not occupied[r0 - 1 + k] then
@@ -302,17 +394,14 @@ local function render(buf, win)
 
       for _, item in ipairs(cols) do
         local is_current = (active_col and item.display_col == active_col)
-        if not (M.config.show_current_indent == "only" and not is_current) then
-          local hl = M.config.char_hl
-          if is_current then
-            hl = M.config.current_char_hl
-          end
+        if not (show_current == "only" and not is_current) then
+          local hl = is_current and current_hl or char_hl
 
           local extmark_opts = {
-            virt_text = { { M.config.char, hl } },
+            virt_text = { { char, hl } },
             virt_text_pos = "overlay",
             hl_mode = "combine",
-            priority = M.config.priority,
+            priority = priority,
           }
 
           local target_col = item.byte_col
@@ -333,6 +422,8 @@ local function render(buf, win)
   state.windows[buf][win] = { r0, r1 }
 end
 
+--- Triggers rendering on all windows showing the specified buffer.
+---@param buf number The buffer handle
 local function render_all(buf)
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
@@ -340,6 +431,8 @@ local function render_all(buf)
   end
 end
 
+--- Attaches buffer-change listeners to the specified buffer.
+---@param buf number The buffer handle
 local function attach(buf)
   if state.attached[buf] and vim.api.nvim_buf_is_loaded(buf) then return end
   if not vim.api.nvim_buf_is_loaded(buf) then
@@ -358,12 +451,15 @@ local function attach(buf)
   state.attached[buf] = ok and res or nil
 end
 
+--- Initialises the default highlight groups.
 local function set_hl()
   vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE" })
   vim.api.nvim_set_hl(0, "IndentinatorGap", { fg = "#555b6e", bg = "NONE" })
   vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#a6adc8", bg = "NONE" })
 end
 
+--- Configures and initialises the plugin with user settings.
+---@param opts table|nil User configuration options
 function M.setup(opts)
   opts = opts or {}
   for k, v in pairs(opts) do
@@ -373,7 +469,6 @@ function M.setup(opts)
   set_hl()
   vim.api.nvim_create_augroup(AUGROUP, { clear = true })
 
-  -- Core redraw-triggering events only
   vim.api.nvim_create_autocmd("BufWinEnter", {
     group = AUGROUP,
     callback = function(e)
@@ -417,10 +512,11 @@ function M.setup(opts)
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
     group = AUGROUP,
     callback = function()
-      if not M.config.show_current_indent then return end
       local win = vim.api.nvim_get_current_win()
       local ok_b, buf = pcall(vim.api.nvim_win_get_buf, win)
       if not ok_b or not is_enabled(buf) then return end
+
+      if not resolve_config(buf, "show_current_indent") then return end
 
       local active_col = get_current_indent_col(buf, win)
       state.current_indent = state.current_indent or {}
@@ -465,18 +561,24 @@ function M.setup(opts)
   end)
 end
 
+--- Explicitly enables guides for a specific buffer.
+---@param buf number|nil The buffer handle (defaults to current)
 function M.enable(buf)
   buf = buf or vim.api.nvim_get_current_buf()
   state.enabled[buf] = true
   render_all(buf)
 end
 
+--- Explicitly disables guides for a specific buffer.
+---@param buf number|nil The buffer handle (defaults to current)
 function M.disable(buf)
   buf = buf or vim.api.nvim_get_current_buf()
   state.enabled[buf] = false
   clear_window_all(buf)
 end
 
+--- Toggles guides on or off for a specific buffer.
+---@param buf number|nil The buffer handle (defaults to current)
 function M.toggle(buf)
   buf = buf or vim.api.nvim_get_current_buf()
   if is_enabled(buf) then
@@ -486,10 +588,14 @@ function M.toggle(buf)
   end
 end
 
+--- Checks if guides are enabled for the specified buffer.
+---@param buf number|nil The buffer handle (defaults to current)
+---@return boolean True if enabled, false otherwise
 function M.is_enabled(buf)
   return is_enabled(buf or vim.api.nvim_get_current_buf())
 end
 
+--- Forces a full redraw of guides in all active windows.
 function M.force_update()
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
