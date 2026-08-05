@@ -27,7 +27,7 @@ local state = {
 local function is_enabled(buf)
   local v = state.enabled[buf]
   if v ~= nil then return v end
-  local ok_ft, ft = pcall(vim.api.nvim_buf_get_option, buf, "filetype")
+  local ok_ft, ft = pcall(vim.api.nvim_get_options_value, buf, "filetype")
   if not ok_ft then ft = "" end
   for _, e in ipairs(M.config.exclude) do
     if ft == e then return false end
@@ -36,9 +36,9 @@ local function is_enabled(buf)
 end
 
 local function indent_width(buf)
-  local ok, sw = pcall(vim.api.nvim_buf_get_option, buf, "shiftwidth")
+  local ok, sw = pcall(vim.api.nvim_get_options_value, buf, "shiftwidth")
   if ok and sw > 0 then return sw end
-  local ok2, ts = pcall(vim.api.nvim_buf_get_option, buf, "tabstop")
+  local ok2, ts = pcall(vim.api.nvim_get_options_value, buf, "tabstop")
   if ok2 and ts > 0 then return ts end
   return 8
 end
