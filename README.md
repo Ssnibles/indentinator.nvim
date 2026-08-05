@@ -1,19 +1,19 @@
 # indentinator.nvim
 
-A tiny, fast indent guides plugin for Neovim. Pure Lua, zero dependencies, and built on modern Neovim APIs: extmark `virt_text` chunks rendered in a single overlay extmark per line, `vim.uv` timers for debounced redraws, and window-viewport rendering so cost stays bounded even in huge files.
+A tiny, fast indent guides plugin for Neovim. Pure Lua, zero dependencies, and built on modern Neovim APIs: extmark `virt_text` chunks rendered in a single overlay extmark per line, event-driven redraw only, and window-viewport rendering so cost stays bounded even in huge files.
 
 ## Features
 
 - **Fast**: one extmark per line using `virt_text` chunks with `virt_text_pos = "overlay"`; guides are only computed and painted for the lines currently visible in the window
 - **Smart by default**: blank lines break the guide column, so guides never run through empty space (`smart = false` continues them like VSCode)
-- **Event-driven**: redraws only on scroll, window enter/resize, or (debounced) buffer edits; never on cursor moves
-- **Bounded work**: per-keystroke redraws are debounced with a `vim.uv` timer and touch only the visible viewport
+- **Event-driven**: redraws only on scroll, window enter/resize, or buffer edits (no timers or debounce); never on cursor moves
+- **Bounded work**: only visible viewport is touched and calculated, no debounce/timer, no full-buffer scan
 - **Buffer-local toggles**: `:IndentinatorToggle` (with `!` for all buffers), `:IndentinatorEnable`, `:IndentinatorDisable`
 - **Highlight-aware**: default highlight groups re-linked on `ColorScheme`, and the full gap span can be painted with `draw_gap_hl`
 
 ## Requirements
 
-- Neovim 0.10+ (uses `vim.uv` timers and extmark `virt_text` chunks)
+- Neovim 0.10+ (uses extmark `virt_text` overlays—no timers needed)
 
 ## Installation
 
@@ -93,8 +93,10 @@ require("indentinator").setup({
   draw_gap_hl = false,               -- also paint the span between guide chars
   show_first_indent_level = true,    -- draw the first indent level's guide
   indent_width = nil,                -- guide column step; nil = use shiftwidth (fallback tabstop)
+  show_current_indent = false,       -- display current indent: false (disable), true or "highlight" (highlight active guide), or "only" (only show the current guide)
+  current_char_hl = "IndentinatorCurrentGuide", -- highlight group for the current indent guide
   exclude = {},                      -- filetypes to disable in, e.g. { "help", "markdown" }
-  debounce = 120,                    -- ms to wait after an edit before redrawing
+
   priority = 100,                    -- extmark priority
 })
 ```
@@ -103,13 +105,17 @@ require("indentinator").setup({
 
 | Group | Default | Description |
 |-------|---------|-------------|
-| `IndentinatorGuide` | links to `SpecialKey` | guide characters |
+| `IndentinatorGuide` | fg only (default: #555b6e), no background | guide characters |
 | `IndentinatorGap` | links to `IndentinatorGuide` | gap fill when `draw_gap_hl = true` |
+| `IndentinatorCurrentGuide` | fg only (default: #a6adc8), no background | current/active guide characters |
 
-Override them after your colorscheme loads (re-applied from `setup()` / `ColorScheme`):
+Override them after your colorscheme loads (re-applied from `setup()` / `ColorScheme`).
 
+The highlight group **must have `bg = NONE`** or the guides will obscure background highlights (diagnostic underlines, colorcolumn, etc).
+
+Examples:
 ```lua
-vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e" })
+vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE" })
 ```
 
 ## How it works
@@ -117,7 +123,7 @@ vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e" })
 - Only the window's visible lines (`w0`–`w$`) are analyzed and painted, so per-keystroke cost is bounded regardless of file size; multiple windows on the same buffer each keep their own viewport extmarks
 - Each line's guide columns are the multiples of `indent_width` (default `shiftwidth`) that fit within its leading whitespace; the deepest column is included only while it still *is* a real indent (columns are capped at `cells <= indent`, so nothing is drawn past the content)
 - Smart mode stops at blank lines; non-smart mode fills blank lines with the intersection of the guide columns of the surrounding non-blank lines
-- Edits (`TextChanged*`, `BufWritePost`) trigger a debounced redraw; `WinScrolled`, `WinEnter`, `WinResized`, `BufWinEnter` redraw immediately; `OptionSet` on `shiftwidth`/`tabstop`/`expandtab`/`softtabstop` also triggers a redraw
+- Edits (`TextChanged*`, `BufWritePost`) trigger immediate redraw; `WinScrolled`, `WinEnter`, `WinResized`, `BufWinEnter` are also handled; `OptionSet` on `shiftwidth`/`tabstop`/`expandtab`/`softtabstop` triggers redraw
 
 ## Notes and limitations
 

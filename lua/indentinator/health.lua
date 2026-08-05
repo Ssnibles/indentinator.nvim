@@ -42,6 +42,9 @@ function M.check()
   health.info(("show_first_indent_level=%s draw_gap_hl=%s exclude=%s"):format(
     tostring(c.show_first_indent_level), tostring(c.draw_gap_hl), vim.inspect(c.exclude)
   ))
+  health.info(("show_current_indent=%s current_char_hl=%s"):format(
+    tostring(c.show_current_indent), tostring(c.current_char_hl)
+  ))
   if #c.exclude > 0 then
     health.info("excluded filetypes: " .. table.concat(c.exclude, ", "))
   end
