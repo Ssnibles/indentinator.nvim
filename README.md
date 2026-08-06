@@ -74,13 +74,15 @@ require("indentinator").setup({
 
   -- Active scope highlighting
   scope = {
-    enabled = false,   -- highlight the guide at the cursor's active scope
-    range = "block",   -- "block" (current block only) or "global" (entire column)
-    underline = false, -- underline the top line of the active scope block
+    enabled = false,        -- highlight the guide at the cursor's active scope
+    range = "block",        -- "block" (current block only) or "global" (entire column)
+    underline = false,      -- underline the top line of the active scope block
+    text_highlight = true,  -- colour the text on the scope-start line
   },
 
   current_char_hl = "IndentinatorCurrentGuide",     -- Highlight group for the active guide
   scope_underline_hl = "IndentinatorScopeUnderline", -- Highlight group for the scope underline
+  scope_text_hl = "IndentinatorScopeText",           -- Highlight group for scope-start text
   exclude_fn = nil,                  -- Custom callback: fun(buf: number): boolean (true to exclude)
   exclude = {},                      -- List of excluded filetypes, e.g. { "help", "markdown" }
   exclude_buftypes = {               -- List of excluded buftypes
@@ -110,6 +112,7 @@ Standard highlight definitions:
 | `IndentinatorGap` | `#555b6e` | Gap fill colour (when `draw_gap_hl = true`) |
 | `IndentinatorCurrentGuide` | `#a6adc8` | Current/active guide character colour |
 | `IndentinatorScopeUnderline` | `#a6adc8` (underlined) | Underline style for the top level of active scopes |
+| `IndentinatorScopeText` | `#a6adc8` | Foreground colour for scope-start line text |
 
 Highlights are automatically re-applied on `ColorScheme` events. Customise colours in your configuration after loading your preferred colorscheme:
 
