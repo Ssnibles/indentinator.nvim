@@ -570,9 +570,12 @@ local function render(buf, win)
   for k, text in ipairs(lines) do
     local lead = text:match("^%s*")
     if text ~= "" and lead ~= text then
-      local cells = vim.fn.strdisplaywidth(lead)
-      if cells <= 1000 then
-        results[k] = lead_display_width(lead, tabstop)
+      -- Compute the display width in pure Lua (no Vimscript FFI). The 1000-
+      -- column cap guards against degenerate tab-expanded whitespace that
+      -- would produce thousands of guide characters.
+      local disp = lead_display_width(lead, tabstop)
+      if disp <= 1000 then
+        results[k] = disp
       end
     end
   end
