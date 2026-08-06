@@ -183,10 +183,6 @@ local function lead_display_width(lead, tabstop)
   return display_col
 end
 
---- Calculates the active indentation guide column based on the cursor position.
----@param buf number The buffer handle
----@param win number The window handle
----@return number|nil The active column index, or nil if none
 --- Finds the first non-blank line scanning upwards from start_row.
 ---@param buf number The buffer handle
 ---@param start_row number The starting row (1-indexed)
