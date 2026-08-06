@@ -577,6 +577,7 @@ local function render(buf, win)
   end
 
   local results = {}
+  local line_widths = {}  -- per-line indent step for mixed indentation
   for k, text in ipairs(lines) do
     local lead = text:match("^%s*")
     if text ~= "" and lead ~= text then
@@ -586,6 +587,12 @@ local function render(buf, win)
       local disp = lead_display_width(lead, tabstop)
       if disp <= 1000 then
         results[k] = disp
+        -- Mixed indentation: if leading whitespace starts with a tab, use
+        -- tabstop for guide spacing on this line so guides align with tab
+        -- stops rather than shiftwidth.
+        if lead:byte(1) == 9 then
+          line_widths[k] = tabstop
+        end
       end
     end
   end
@@ -610,25 +617,32 @@ local function render(buf, win)
         local b_end = k - 1
 
         local above_val = 0
+        local above_width = nil
         if b_start > 1 then
           above_val = results[b_start - 1] or 0
+          above_width = line_widths[b_start - 1]
         else
           -- Search past viewport top boundary
           above_val = find_indent_above(buf, r0 + b_start - 2, tabstop)
         end
 
         local below_val = 0
+        local below_width = nil
         if b_end < nlines then
           below_val = results[b_end + 1] or 0
+          below_width = line_widths[b_end + 1]
         else
           -- Search past viewport bottom boundary
           below_val = find_indent_below(buf, r0 + b_end, line_count, tabstop)
         end
 
         local fill_val = math.max(above_val, below_val)
+        -- Inherit the guide width from whichever neighbour determined the fill
+        local fill_width = (fill_val == above_val) and above_width or below_width
         if fill_val > 0 then
           for b = b_start, b_end do
             results[b] = fill_val
+            if fill_width then line_widths[b] = fill_width end
           end
         end
       else
@@ -741,9 +755,10 @@ local function render(buf, win)
 
       local effective_disp = disp_col or 0
       if effective_disp > 0 then
+        local step_width = line_widths[k] or width
         local chunks = build_virt_text(
           effective_disp,
-          width,
+          step_width,
           line_active_col,
           show_current,
           show_first,
