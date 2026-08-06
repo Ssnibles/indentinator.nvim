@@ -900,15 +900,32 @@ function M.setup(opts)
     group = AUGROUP,
     callback = function(e)
       local win = tonumber(e.match)
-      for buf, ranges in pairs(state.windows) do
-        if ranges[win] then ranges[win] = nil end
+      if not win then return end
+      for _, ranges in pairs(state.windows) do
+        ranges[win] = nil
       end
-      if state.current_indent and state.current_indent[win] ~= nil then
-        state.current_indent[win] = nil
+      if state.current_indent then state.current_indent[win] = nil end
+      if state.last_cursor_row then state.last_cursor_row[win] = nil end
+    end,
+  })
+
+  -- Purge all per-buffer state when a buffer is deleted so memory does not
+  -- grow without bound as buffers are opened and closed.
+  vim.api.nvim_create_autocmd({ "BufDelete", "BufUnload" }, {
+    group = AUGROUP,
+    callback = function(e)
+      local buf = e.buf
+      if not buf then return end
+      -- Stop and discard any pending debounce timer for this buffer.
+      local t = state.timers[buf]
+      if t then
+        pcall(function() t:stop() end)
+        state.timers[buf] = nil
       end
-      if state.last_cursor_row and state.last_cursor_row[win] ~= nil then
-        state.last_cursor_row[win] = nil
-      end
+      -- Wipe viewport tracking, enablement override, and attachment record.
+      state.windows[buf] = nil
+      state.enabled[buf] = nil
+      state.attached[buf] = nil
     end,
   })
 
