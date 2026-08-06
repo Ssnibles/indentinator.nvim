@@ -71,8 +71,17 @@ require("indentinator").setup({
   show_first_indent_level = true,    -- Draw guides at column 0
   indent_width = nil,                -- Column step size (nil defaults to shiftwidth/tabstop)
   priority = 100,                    -- Extmark priority level
-  show_current_indent = false,       -- Highlighting: false, true (highlight active), or "only" (draw active only)
-  current_char_hl = "IndentinatorCurrentGuide", -- Highlight group for the active guide
+
+  -- Active scope highlighting
+  scope = {
+    enabled = false,   -- highlight the guide at the cursor's active scope
+    range = "block",   -- "block" (current block only) or "global" (entire column)
+    underline = false, -- underline the top line of the active scope block
+  },
+
+  current_char_hl = "IndentinatorCurrentGuide",     -- Highlight group for the active guide
+  scope_underline_hl = "IndentinatorScopeUnderline", -- Highlight group for the scope underline
+  exclude_fn = nil,                  -- Custom callback: fun(buf: number): boolean (true to exclude)
   exclude = {},                      -- List of excluded filetypes, e.g. { "help", "markdown" }
   exclude_buftypes = {               -- List of excluded buftypes
     "terminal",
@@ -80,7 +89,8 @@ require("indentinator").setup({
     "quickfix",
     "prompt"
   },
-  filetypes = {                      -- Per-filetype custom overrides
+  -- Per-filetype overrides (deep-merged, so only specified keys are overridden)
+  filetypes = {
     python = {
       indent_width = 2
     }
@@ -99,16 +109,39 @@ Standard highlight definitions:
 | `IndentinatorGuide` | `#555b6e` | Default guide character colour |
 | `IndentinatorGap` | `#555b6e` | Gap fill colour (when `draw_gap_hl = true`) |
 | `IndentinatorCurrentGuide` | `#a6adc8` | Current/active guide character colour |
+| `IndentinatorScopeUnderline` | `#a6adc8` (underlined) | Underline style for the top level of active scopes |
 
 Highlights are automatically re-applied on `ColorScheme` events. Customise colours in your configuration after loading your preferred colorscheme:
 
 ```lua
 vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE" })
 vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#a6adc8", bg = "NONE" })
+vim.api.nvim_set_hl(0, "IndentinatorScopeUnderline", { fg = "#a6adc8", bg = "NONE", underline = true })
 ```
 
 > [!IMPORTANT]
 > Always set `bg = "NONE"` on these highlight groups to prevent guides from obscuring background styling (such as diagnostics, search highlights, or colorcolumns).
+
+### Scope Underline Example
+
+With `scope.enabled` and `scope.underline` both set to `true`, the first line of the active block gets an underline when the cursor is anywhere inside it:
+
+```lua
+-- "callback = function(ev)" is underlined when cursor is inside this block:
+callback = function(ev)
+  vim.keymap.set("n", "q", "<cmd>close<CR>", { buffer = ev.buf, silent = true })
+  vim.keymap.set("n", "<Esc>", "<cmd>close<CR>", { buffer = ev.buf, silent = true })
+end,
+```
+
+```lua
+require("indentinator").setup({
+  scope = {
+    enabled = true,
+    underline = true,
+  },
+})
+```
 
 ---
 

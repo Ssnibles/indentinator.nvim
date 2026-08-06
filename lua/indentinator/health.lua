@@ -52,8 +52,12 @@ function M.check()
   health.info(("show_first_indent_level=%s draw_gap_hl=%s"):format(
     tostring(c.show_first_indent_level), tostring(c.draw_gap_hl)
   ))
-  health.info(("show_current_indent=%s current_char_hl=%s"):format(
-    tostring(c.show_current_indent), tostring(c.current_char_hl)
+  local scope = c.scope or {}
+  health.info(("scope.enabled=%s scope.range=%s scope.underline=%s"):format(
+    tostring(scope.enabled), tostring(scope.range), tostring(scope.underline)
+  ))
+  health.info(("current_char_hl=%s scope_underline_hl=%s exclude_fn_configured=%s"):format(
+    tostring(c.current_char_hl), tostring(c.scope_underline_hl), tostring(c.exclude_fn ~= nil)
   ))
   if #c.exclude > 0 then
     health.info("excluded filetypes: " .. table.concat(c.exclude, ", "))
