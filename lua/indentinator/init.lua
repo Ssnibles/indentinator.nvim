@@ -333,7 +333,7 @@ local function get_scope_range(buf, cursor_row, active_col, width, tabstop)
   end
 
   -- Search downwards
-  current = cursor_row + 1
+  local current = cursor_row + 1
   while current <= line_count do
     local chunk_end = math.min(line_count, current + 50 - 1)
     local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, current - 1, chunk_end, false)
