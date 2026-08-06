@@ -516,14 +516,15 @@ end
 ---@param buf number The buffer handle
 local function clear_window_all(buf)
   if state.windows[buf] then
-    for _, r in pairs(state.windows[buf]) do
-      local start_line = math.max(0, r[1] - 1)
-      -- Fix #4 (same): use r[2] + 1 for the exclusive end.
-      pcall(vim.api.nvim_buf_clear_namespace, buf, NS, start_line, r[2] + 1)
-    end
     state.windows[buf] = nil
   end
+  -- Full namespace clear as a safety sweep: if the viewport shifted between
+  -- renders, extmarks outside the tracked ranges would be orphaned by a
+  -- range-only clear.  Since this function is only called when fully
+  -- disabling guides for a buffer, a blanket wipe is both safe and correct.
+  pcall(vim.api.nvim_buf_clear_namespace, buf, NS, 0, -1)
 end
+
 
 --- Renders indentation guides for the visible lines of a buffer in a specific window.
 ---@param buf number The buffer handle
