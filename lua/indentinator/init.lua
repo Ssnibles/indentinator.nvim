@@ -360,7 +360,11 @@ local function get_scope_range(buf, cursor_row, active_col, width, tabstop)
 
   -- Fix #5: trim trailing blank lines from scope_end so the highlight does
   -- not bleed over blank lines at the bottom of a block.
+  -- However, never trim past cursor_row — if the user just opened a new
+  -- blank line (o/O) inside the scope, it must stay within the range so
+  -- it receives the active scope highlight group.
   if scope_end > scope_start then
+    local pre_trim_end = scope_end
     while scope_end > scope_start do
       local ok_b, bl = pcall(vim.api.nvim_buf_get_lines, buf, scope_end - 1, scope_end, false)
       if ok_b and bl and bl[1] ~= nil then
@@ -373,6 +377,11 @@ local function get_scope_range(buf, cursor_row, active_col, width, tabstop)
       else
         break
       end
+    end
+    -- Restore scope_end to include the cursor's line if it was trimmed away
+    -- but was originally within the scope (user is actively editing there).
+    if scope_end < cursor_row and cursor_row <= pre_trim_end then
+      scope_end = cursor_row
     end
   end
 
