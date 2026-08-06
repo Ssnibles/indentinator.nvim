@@ -36,5 +36,5 @@ vim.api.nvim_create_user_command("IndentinatorToggle", cmd(function(opts)
 end), { desc = "Toggle indentation guides (use ! to toggle in all buffers)", bang = true })
 
 vim.api.nvim_create_user_command("IndentinatorHealth", cmd(function()
-  require("indentinator.health").check()
+  vim.cmd("checkhealth indentinator")
 end), { desc = "Run indentinator health check" })

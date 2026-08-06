@@ -397,6 +397,29 @@ end
 ---@param win number The window handle
 ---@param width number The default indentation width
 ---@param tabstop number The tabstop size
+local ROOT_AST_TYPES = {
+  translation_unit = true,
+  program = true,
+  source_file = true,
+  chunk = true,
+  module = true,
+  script = true,
+  document = true,
+  compilation_unit = true,
+}
+
+local BODY_CONTAINER_TYPES = {
+  block = true,
+  statement_block = true,
+  compound_statement = true,
+  body = true,
+}
+
+--- Determines scope range and active guide column using Treesitter AST if available.
+---@param buf number The buffer handle
+---@param win number The window handle
+---@param width number The default indentation width
+---@param tabstop number The tabstop size
 ---@return number|nil scope_start (1-indexed)
 ---@return number|nil scope_end (1-indexed)
 ---@return number|nil active_col
@@ -407,6 +430,8 @@ local function get_treesitter_scope_range(buf, win, width, tabstop)
 
   local ok_p, parser = pcall(vim.treesitter.get_parser, buf)
   if not ok_p or not parser then return nil, nil, nil end
+
+  pcall(function() parser:parse(true) end)
 
   local cursor = vim.api.nvim_win_get_cursor(win)
   local cursor_row = cursor[1] - 1
@@ -437,11 +462,23 @@ local function get_treesitter_scope_range(buf, win, width, tabstop)
     local s_row, _, e_row, _ = curr:range()
     if s_row < e_row then
       local type_name = curr:type()
-      if type_name ~= "translation_unit" and type_name ~= "program" and type_name ~= "source_file" and type_name ~= "chunk" then
+      if not ROOT_AST_TYPES[type_name] then
+        if BODY_CONTAINER_TYPES[type_name] then
+          local parent = curr:parent()
+          if parent then
+            local p_type = parent:type()
+            if not ROOT_AST_TYPES[p_type] then
+              local p_s_row, _, p_e_row, _ = parent:range()
+              if p_s_row < p_e_row then
+                scope_node = parent
+                break
+              end
+            end
+          end
+        end
         scope_node = curr
         break
       end
-      if not scope_node then scope_node = curr end
     end
     curr = curr:parent()
   end

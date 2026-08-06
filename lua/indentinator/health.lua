@@ -34,14 +34,16 @@ function M.check()
     health.error("vim.uv.new_timer is not available")
   end
 
-  local ok = pcall(vim.api.nvim_buf_set_extmark, 0, 0, 0, 0, {
+  local ns = vim.api.nvim_create_namespace("indentinator_health_test")
+  local ok, err_or_id = pcall(vim.api.nvim_buf_set_extmark, 0, ns, 0, 0, {
     virt_text = { { " ", "IndentinatorGuide" } },
     virt_text_pos = "overlay",
   })
   if ok then
+    pcall(vim.api.nvim_buf_clear_namespace, 0, ns, 0, -1)
     health.ok("extmark overlay virt_text works correctly")
   else
-    health.error("extmark overlay virt_text failed: " .. tostring(ok))
+    health.error("extmark overlay virt_text failed: " .. tostring(err_or_id))
   end
 
   local ind = require("indentinator")
