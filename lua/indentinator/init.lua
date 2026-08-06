@@ -795,12 +795,13 @@ local function attach(buf)
     if not vim.api.nvim_buf_is_valid(buf) then return end
     local existing = state.timers[buf]
     if existing then
-      pcall(function() existing:stop() end)
+      pcall(function() existing:stop(); existing:close() end)
     end
     local timer = vim.uv.new_timer()
     state.timers[buf] = timer
     timer:start(15, 0, vim.schedule_wrap(function()
       timer:stop()
+      timer:close()
       if state.timers[buf] == timer then
         state.timers[buf] = nil
       end
@@ -919,7 +920,7 @@ function M.setup(opts)
       -- Stop and discard any pending debounce timer for this buffer.
       local t = state.timers[buf]
       if t then
-        pcall(function() t:stop() end)
+        pcall(function() t:stop(); t:close() end)
         state.timers[buf] = nil
       end
       -- Wipe viewport tracking, enablement override, and attachment record.
