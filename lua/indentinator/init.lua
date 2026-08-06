@@ -848,13 +848,6 @@ function M.setup(opts)
     end,
   })
 
-  vim.api.nvim_create_autocmd("BufWritePost", {
-    group = AUGROUP,
-    callback = function(e)
-      if e.buf and vim.api.nvim_buf_is_valid(e.buf) then render_all(e.buf) end
-    end,
-  })
-
   -- Fix #3: WinScrolled/WinResized always populate ev.match with the
   -- triggering window, so use that as the narrow fallback instead of
   -- iterating every open window.
