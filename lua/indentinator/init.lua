@@ -69,6 +69,8 @@ local state = {
   attached = {},
   current_indent = {},
   last_cursor_row = {},
+  -- Per-buffer uv timers used to debounce on_bytes renders
+  timers = {},
 }
 
 --- Resolves the merged scope config for a buffer, respecting filetype overrides.
@@ -359,6 +361,24 @@ local function get_scope_range(buf, cursor_row, active_col, width, tabstop)
     current = chunk_end + 1
   end
 
+  -- Fix #5: trim trailing blank lines from scope_end so the highlight does
+  -- not bleed over blank lines at the bottom of a block.
+  if scope_end > scope_start then
+    while scope_end > scope_start do
+      local ok_b, bl = pcall(vim.api.nvim_buf_get_lines, buf, scope_end - 1, scope_end, false)
+      if ok_b and bl and bl[1] ~= nil then
+        local t = bl[1]
+        if t == "" or t:match("^%s*$") then
+          scope_end = scope_end - 1
+        else
+          break
+        end
+      else
+        break
+      end
+    end
+  end
+
   return scope_start, scope_end
 end
 
@@ -486,7 +506,11 @@ local function clear_window(buf, win)
   local r = ranges[win]
   if r then
     local start_line = math.max(0, r[1] - 1)
-    pcall(vim.api.nvim_buf_clear_namespace, buf, NS, start_line, r[2])
+    -- Fix #4: r[2] is the inclusive 1-indexed last visible line. The
+    -- nvim_buf_clear_namespace end argument is exclusive (0-indexed), so we
+    -- pass r[2] directly (== r[2]-1 converted to 0-indexed + 1 exclusive).
+    -- Previously r[2] was passed as-is, which was one row short.
+    pcall(vim.api.nvim_buf_clear_namespace, buf, NS, start_line, r[2] + 1)
     ranges[win] = nil
   end
 end
@@ -495,9 +519,10 @@ end
 ---@param buf number The buffer handle
 local function clear_window_all(buf)
   if state.windows[buf] then
-    for win, r in pairs(state.windows[buf]) do
+    for _, r in pairs(state.windows[buf]) do
       local start_line = math.max(0, r[1] - 1)
-      pcall(vim.api.nvim_buf_clear_namespace, buf, NS, start_line, r[2])
+      -- Fix #4 (same): use r[2] + 1 for the exclusive end.
+      pcall(vim.api.nvim_buf_clear_namespace, buf, NS, start_line, r[2] + 1)
     end
     state.windows[buf] = nil
   end
@@ -652,13 +677,17 @@ local function render(buf, win)
         end
       end
       if text_len > start_byte then
+        -- Fix #6: use priority + 1 for highlight extmarks so they always sit
+        -- above the virt_text extmark (priority). This makes ordering
+        -- deterministic and prevents the guide char from randomly disappearing
+        -- on the scope-start line.
         pcall(vim.api.nvim_buf_set_extmark, buf, NS, line_idx, start_byte, {
           end_row = line_idx,
           end_col = text_len,
           hl_group = underline_hl,
           hl_eol = false,
           hl_mode = "combine",
-          priority = priority,
+          priority = priority + 1,
         })
         -- Colour the text on the scope-start line to match the active guide.
         -- Priority must exceed treesitter's default (100) to win the fg race.
@@ -671,7 +700,7 @@ local function render(buf, win)
               hl_group = text_hl,
               hl_eol = false,
               hl_mode = "combine",
-              priority = priority + 100,
+              priority = priority + 101,
             })
           end
         end
@@ -748,14 +777,32 @@ local function attach(buf)
     state.attached[buf] = nil
     return
   end
+
+  -- Fix #1: debounce on_bytes with a per-buffer uv timer.
+  -- Rapid edits (fast typing) previously queued many scheduled renders that
+  -- could race, leaving ghost extmark rows. Now only the last edit within a
+  -- 15 ms window triggers a render.
+  local function schedule_render()
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    local existing = state.timers[buf]
+    if existing then
+      pcall(function() existing:stop() end)
+    end
+    local timer = vim.uv.new_timer()
+    state.timers[buf] = timer
+    timer:start(15, 0, vim.schedule_wrap(function()
+      timer:stop()
+      if state.timers[buf] == timer then
+        state.timers[buf] = nil
+      end
+      if vim.api.nvim_buf_is_valid(buf) then
+        render_all(buf)
+      end
+    end))
+  end
+
   local ok, res = pcall(vim.api.nvim_buf_attach, buf, false, {
-    on_bytes = function()
-      vim.schedule(function()
-        if vim.api.nvim_buf_is_valid(buf) then
-          render_all(buf)
-        end
-      end)
-    end,
+    on_bytes = schedule_render,
   })
   state.attached[buf] = ok and res or nil
 end
@@ -797,7 +844,9 @@ function M.setup(opts)
     callback = function(e)
       if e.buf and vim.api.nvim_buf_is_valid(e.buf) then
         attach(e.buf)
-        render(e.buf, vim.api.nvim_get_current_win())
+        -- Fix #2: render_all so every window showing this buffer gets guides,
+        -- not just the current window (which may be a different split).
+        render_all(e.buf)
       end
     end,
   })
@@ -809,27 +858,39 @@ function M.setup(opts)
     end,
   })
 
-  vim.api.nvim_create_autocmd({ "WinScrolled", "WinEnter", "WinResized" }, {
+  -- Fix #3: WinScrolled/WinResized always populate ev.match with the
+  -- triggering window, so use that as the narrow fallback instead of
+  -- iterating every open window.
+  vim.api.nvim_create_autocmd({ "WinScrolled", "WinResized" }, {
     group = AUGROUP,
     callback = function(ev)
-      if ev.event == "WinScrolled" or ev.event == "WinResized" then
-        local event_wins = vim.v.event and vim.v.event.all
-        if event_wins and next(event_wins) then
-          for win_id_str, _ in pairs(event_wins) do
-            local win = tonumber(win_id_str)
-            if win then
-              local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
-              if ok_b then render(wb, win) end
-            end
+      local event_wins = vim.v.event and vim.v.event.all
+      if event_wins and next(event_wins) then
+        for win_id_str, _ in pairs(event_wins) do
+          local win = tonumber(win_id_str)
+          if win then
+            local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
+            if ok_b then render(wb, win) end
           end
-          return
         end
+        return
       end
-      -- Fallback (e.g. WinEnter or when event details are not populated)
-      for _, win in ipairs(vim.api.nvim_list_wins()) do
+      -- Narrow fallback: render only the triggering window (ev.match is
+      -- always set by WinScrolled/WinResized), avoiding a full-session sweep.
+      local win = tonumber(ev.match)
+      if win then
         local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
         if ok_b then render(wb, win) end
       end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group = AUGROUP,
+    callback = function()
+      local win = vim.api.nvim_get_current_win()
+      local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
+      if ok_b then render(wb, win) end
     end,
   })
 
