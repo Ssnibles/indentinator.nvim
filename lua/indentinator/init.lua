@@ -29,6 +29,7 @@
 ---@field attached table<number, boolean|number> Attachment status for buffer listeners
 ---@field current_indent table<number, number|nil> Active column index tracked per window
 ---@field last_cursor_row table<number, number|nil> Last cursor line tracked per window
+---@field timers table<number, uv_timer_t|nil> Per-buffer debounce timers for on_bytes renders
 
 -- Minimal event-driven indentation guides for Neovim
 local M = {}
