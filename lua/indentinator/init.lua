@@ -812,7 +812,14 @@ local function attach(buf)
   end
 
   local ok, res = pcall(vim.api.nvim_buf_attach, buf, false, {
-    on_bytes = schedule_render,
+    on_bytes = function(...)
+      -- Return true to auto-detach when the buffer is no longer valid or loaded
+      if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_buf_is_loaded(buf) then
+        state.attached[buf] = nil
+        return true
+      end
+      schedule_render(...)
+    end,
   })
   state.attached[buf] = ok and res or nil
 end
