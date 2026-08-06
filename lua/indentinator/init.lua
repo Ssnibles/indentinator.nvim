@@ -624,12 +624,21 @@ local function render(buf, win)
     end
   end
 
-  -- Ensure we do not redraw lines occupied by other windows showing the same buffer
+  -- Ensure we do not redraw lines occupied by other windows showing the same buffer.
+  -- Use next() instead of vim.tbl_count() — we only need to know if there is
+  -- *more than one* tracked window, not the exact count.
   local occupied = {}
-  if vim.tbl_count(state.windows[buf] or {}) > 1 then
-    for other, r in pairs(state.windows[buf]) do
-      if other ~= win then
-        for ln = r[1], r[2] do occupied[ln] = true end
+  local wins_for_buf = state.windows[buf]
+  if wins_for_buf and next(wins_for_buf) then
+    local has_other = false
+    for other, _ in pairs(wins_for_buf) do
+      if other ~= win then has_other = true; break end
+    end
+    if has_other then
+      for other, r in pairs(wins_for_buf) do
+        if other ~= win then
+          for ln = r[1], r[2] do occupied[ln] = true end
+        end
       end
     end
   end
