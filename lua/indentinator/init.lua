@@ -835,6 +835,8 @@ local function set_hl()
 end
 
 --- Configures and initialises the plugin with user settings.
+--- Idempotent: calling setup() more than once merges configuration but
+--- does not re-register autocmds or duplicate initial renders.
 ---@param opts table|nil User configuration options
 function M.setup(opts)
   opts = opts or {}
@@ -853,6 +855,12 @@ function M.setup(opts)
       end
     end
   end
+
+  -- Only register autocmds and schedule initial renders once.  Subsequent
+  -- setup() calls (e.g. from a plugin manager after the plugin/ file already
+  -- ran) still merge config above but skip everything below.
+  if M._setup_done then return end
+  M._setup_done = true
 
   set_hl()
   vim.api.nvim_create_augroup(AUGROUP, { clear = true })
