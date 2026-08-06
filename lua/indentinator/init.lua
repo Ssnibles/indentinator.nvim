@@ -740,7 +740,7 @@ local function render(buf, win)
       end
     end
 
-    if not occupied[abs_line] then
+    if disp_col and disp_col > 0 and not occupied[abs_line] then
       -- Determine if the current line has the active guide highlighted
       local line_active_col = nil
       if active_col then
@@ -753,71 +753,39 @@ local function render(buf, win)
         end
       end
 
-      local effective_disp = disp_col or 0
-      if effective_disp > 0 then
-        local step_width = line_widths[k] or width
-        local chunks = build_virt_text(
-          effective_disp,
-          step_width,
-          line_active_col,
-          show_current,
-          show_first,
-          char,
-          char_hl,
-          current_hl,
-          gap_hl,
-          draw_gap_hl
-        )
+      local step_width = line_widths[k] or width
+      local chunks = build_virt_text(
+        disp_col,
+        step_width,
+        line_active_col,
+        show_current,
+        show_first,
+        char,
+        char_hl,
+        current_hl,
+        gap_hl,
+        draw_gap_hl
+      )
 
-        -- On the scope-start line, the active guide at active_col falls at
-        -- the whitespace boundary (active_col == disp_col), so build_virt_text
-        -- never draws it. Append an underlined guide character to visually
-        -- connect the vertical guide from the scope body to the underline.
-        if is_this_scope_start and underline_enabled and line_active_col
-           and line_active_col >= effective_disp then
-          -- Fill any remaining gap columns between disp_col and active_col
-          local gap = line_active_col - effective_disp
-          if gap > 0 then
-            table.insert(chunks, { string.rep(" ", gap), nil })
-          end
-          table.insert(chunks, { char, "IndentinatorScopeGuideUnderline" })
-        end
-
-        if #chunks > 0 then
-          -- Optimisation: skip extmark if nothing will be visible
-          local has_visible = false
-          for _, chunk in ipairs(chunks) do
-            local text, hl = chunk[1], chunk[2]
-            if hl and (text:find("[^ ]") or draw_gap_hl) then
-              has_visible = true
-              break
-            end
-          end
-
-          if has_visible then
-            pcall(vim.api.nvim_buf_set_extmark, buf, NS, line_idx, 0, {
-              virt_text = chunks,
-              virt_text_pos = "overlay",
-              hl_mode = "combine",
-              priority = priority,
-            })
+      if #chunks > 0 then
+        -- Optimisation: skip extmark if nothing will be visible
+        local has_visible = false
+        for _, chunk in ipairs(chunks) do
+          local text, hl = chunk[1], chunk[2]
+          if hl and (text:find("[^ ]") or draw_gap_hl) then
+            has_visible = true
+            break
           end
         end
-      elseif is_this_scope_start and underline_enabled and line_active_col
-             and line_active_col >= 0 then
-        -- Scope-start line has no indentation (disp_col == 0) but still
-        -- needs the connecting guide character.
-        local chunks = {}
-        if line_active_col > 0 then
-          table.insert(chunks, { string.rep(" ", line_active_col), nil })
+
+        if has_visible then
+          pcall(vim.api.nvim_buf_set_extmark, buf, NS, line_idx, 0, {
+            virt_text = chunks,
+            virt_text_pos = "overlay",
+            hl_mode = "combine",
+            priority = priority,
+          })
         end
-        table.insert(chunks, { char, "IndentinatorScopeGuideUnderline" })
-        pcall(vim.api.nvim_buf_set_extmark, buf, NS, line_idx, 0, {
-          virt_text = chunks,
-          virt_text_pos = "overlay",
-          hl_mode = "combine",
-          priority = priority,
-        })
       end
     end
   end
@@ -887,7 +855,6 @@ local function set_hl()
   vim.api.nvim_set_hl(0, "IndentinatorGap", { fg = "#555b6e", bg = "NONE", default = true })
   vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#a6adc8", bg = "NONE", default = true })
   vim.api.nvim_set_hl(0, "IndentinatorScopeUnderline", { fg = "#a6adc8", bg = "NONE", underline = true, default = true })
-  vim.api.nvim_set_hl(0, "IndentinatorScopeGuideUnderline", { fg = "#a6adc8", bg = "NONE", underline = true, default = true })
   vim.api.nvim_set_hl(0, "IndentinatorScopeText", { fg = "#a6adc8", bg = "NONE", default = true })
 end
 
