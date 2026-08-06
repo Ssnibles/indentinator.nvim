@@ -862,6 +862,17 @@ function M.setup(opts)
   if M._setup_done then return end
   M._setup_done = true
 
+  -- Validate guide character width: build_virt_text assumes exactly 1 display
+  -- column.  Multi-width chars (full-width Unicode, emoji) break alignment.
+  local char_width = vim.fn.strdisplaywidth(M.config.char)
+  if char_width ~= 1 then
+    vim.notify(
+      ("indentinator: char %q has display width %d (expected 1), falling back to '│'"):format(M.config.char, char_width),
+      vim.log.levels.WARN
+    )
+    M.config.char = "│"
+  end
+
   set_hl()
   vim.api.nvim_create_augroup(AUGROUP, { clear = true })
 
