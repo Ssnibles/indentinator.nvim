@@ -657,7 +657,7 @@ local function render(buf, win)
   local priority = resolve_config(buf, "priority")
   local underline_enabled = scope_cfg.underline == true
   local underline_hl = resolve_config(buf, "scope_underline_hl")
-  local text_highlight_enabled = underline_enabled and scope_cfg.text_highlight ~= false
+  local text_highlight_enabled = scope_cfg.text_highlight ~= false
   local text_hl = resolve_config(buf, "scope_text_hl")
 
   for k = 1, #lines do
@@ -666,10 +666,8 @@ local function render(buf, win)
     local line_idx = r0 - 2 + k
     local is_this_scope_start = (scope_start ~= nil and abs_line == scope_start)
 
-    -- Emit the underline extmark for the scope-start line. We cover only the
-    -- byte-length of the actual text so the underline stops at the last
-    -- character rather than stretching to the window edge.
-    if is_this_scope_start and underline_enabled and not occupied[abs_line] then
+    -- Emit underline and/or text highlight extmarks for the scope-start line.
+    if is_this_scope_start and (underline_enabled or text_highlight_enabled) and not occupied[abs_line] then
       local scope_line_text = lines[k]
       local text_len = #scope_line_text
       -- Walk the leading whitespace to find the byte offset for active_col so
@@ -691,14 +689,16 @@ local function render(buf, win)
         -- above the virt_text extmark (priority). This makes ordering
         -- deterministic and prevents the guide char from randomly disappearing
         -- on the scope-start line.
-        pcall(vim.api.nvim_buf_set_extmark, buf, NS, line_idx, start_byte, {
-          end_row = line_idx,
-          end_col = text_len,
-          hl_group = underline_hl,
-          hl_eol = false,
-          hl_mode = "combine",
-          priority = priority + 1,
-        })
+        if underline_enabled then
+          pcall(vim.api.nvim_buf_set_extmark, buf, NS, line_idx, start_byte, {
+            end_row = line_idx,
+            end_col = text_len,
+            hl_group = underline_hl,
+            hl_eol = false,
+            hl_mode = "combine",
+            priority = priority + 1,
+          })
+        end
         -- Colour the text on the scope-start line to match the active guide.
         -- Priority must exceed treesitter's default (100) to win the fg race.
         if text_highlight_enabled then
