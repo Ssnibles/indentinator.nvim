@@ -3,6 +3,7 @@
 ---@field range string Scope range: "block" (current block) or "global" (full column)
 ---@field underline boolean Whether to underline the top line of the active scope
 ---@field text_highlight boolean Whether to colour the text on the scope-start line
+---@field treesitter boolean Whether to use Treesitter for scope calculation (falls back to indentation if unavailable)
 
 ---@class IndentinatorConfig
 ---@field enabled boolean Whether the plugin is enabled globally or per-buffer
@@ -29,6 +30,7 @@
 ---@field attached table<number, boolean|number> Attachment status for buffer listeners
 ---@field current_indent table<number, number|nil> Active column index tracked per window
 ---@field last_cursor_row table<number, number|nil> Last cursor line tracked per window
+---@field last_cursor_col table<number, number|nil> Last cursor column tracked per window
 ---@field timers table<number, uv_timer_t|nil> Per-buffer debounce timers for on_bytes renders
 
 -- Minimal event-driven indentation guides for Neovim
@@ -55,6 +57,7 @@ M.config = {
     range = "block",        -- "block" (current block only) or "global" (entire column)
     underline = false,      -- underline the top line of the active scope block
     text_highlight = true,  -- colour the text on the scope-start line
+    treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
   },
   current_char_hl = "IndentinatorCurrentGuide",
   scope_underline_hl = "IndentinatorScopeUnderline",
@@ -70,6 +73,7 @@ local state = {
   attached = {},
   current_indent = {},
   last_cursor_row = {},
+  last_cursor_col = {},
   -- Per-buffer uv timers used to debounce on_bytes renders
   timers = {},
 }
@@ -388,6 +392,77 @@ local function get_scope_range(buf, cursor_row, active_col, width, tabstop)
   return scope_start, scope_end
 end
 
+--- Determines scope range and active guide column using Treesitter AST if available.
+---@param buf number The buffer handle
+---@param win number The window handle
+---@param width number The default indentation width
+---@param tabstop number The tabstop size
+---@return number|nil scope_start (1-indexed)
+---@return number|nil scope_end (1-indexed)
+---@return number|nil active_col
+local function get_treesitter_scope_range(buf, win, width, tabstop)
+  if not vim.treesitter or not vim.treesitter.get_parser then
+    return nil, nil, nil
+  end
+
+  local ok_p, parser = pcall(vim.treesitter.get_parser, buf)
+  if not ok_p or not parser then return nil, nil, nil end
+
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local cursor_row = cursor[1] - 1
+  local cursor_col = cursor[2]
+
+  local node = nil
+  if vim.treesitter.get_node then
+    local ok_n, n = pcall(vim.treesitter.get_node, { buf = buf, pos = { cursor_row, cursor_col } })
+    if ok_n then node = n end
+  end
+
+  if not node then
+    local ok_tree, trees = pcall(function() return parser:parse() end)
+    if ok_tree and trees and trees[1] then
+      local root = trees[1]:root()
+      if root then
+        node = root:named_descendant_for_range(cursor_row, cursor_col, cursor_row, cursor_col)
+      end
+    end
+  end
+
+  if not node then return nil, nil, nil end
+
+  -- Traverse upward through ancestor AST nodes to locate a multi-line scope container
+  local scope_node = nil
+  local curr = node
+  while curr do
+    local s_row, _, e_row, _ = curr:range()
+    if s_row < e_row then
+      local type_name = curr:type()
+      if type_name ~= "translation_unit" and type_name ~= "program" and type_name ~= "source_file" and type_name ~= "chunk" then
+        scope_node = curr
+        break
+      end
+      if not scope_node then scope_node = curr end
+    end
+    curr = curr:parent()
+  end
+
+  if not scope_node then return nil, nil, nil end
+
+  local start_row, _, end_row, _ = scope_node:range()
+  local scope_start = start_row + 1
+  local scope_end = end_row + 1
+
+  -- Calculate active guide column from the indentation of the scope start line
+  local ok_l, lines = pcall(vim.api.nvim_buf_get_lines, buf, start_row, start_row + 1, false)
+  local active_col = 0
+  if ok_l and lines and lines[1] then
+    local lead = lines[1]:match("^%s*")
+    active_col = lead_display_width(lead or "", tabstop)
+  end
+
+  return scope_start, scope_end, active_col
+end
+
 --- Calculates the active indentation guide column based on the cursor position.
 ---@param buf number The buffer handle
 ---@param win number The window handle
@@ -567,13 +642,25 @@ local function render(buf, win)
   local scope_cfg = resolve_scope(buf)
   local show_current = scope_cfg.enabled
   if show_current then
-    active_col = get_current_indent_col(buf, win)
+    if scope_cfg.treesitter then
+      local ts_start, ts_end, ts_col = get_treesitter_scope_range(buf, win, width, tabstop)
+      if ts_start and ts_end and ts_col then
+        scope_start = ts_start
+        scope_end = ts_end
+        active_col = ts_col
+      end
+    end
+
+    if active_col == nil then
+      active_col = get_current_indent_col(buf, win)
+      if active_col and scope_cfg.range == "block" then
+        local cursor = vim.api.nvim_win_get_cursor(win)
+        scope_start, scope_end = get_scope_range(buf, cursor[1], active_col, width, tabstop)
+      end
+    end
+
     state.current_indent = state.current_indent or {}
     state.current_indent[win] = active_col
-    if active_col and scope_cfg.range == "block" then
-      local cursor = vim.api.nvim_win_get_cursor(win)
-      scope_start, scope_end = get_scope_range(buf, cursor[1], active_col, width, tabstop)
-    end
   end
 
   local results = {}
@@ -992,16 +1079,23 @@ function M.setup(opts)
       if not scope_cfg.enabled then return end
 
       local cursor = vim.api.nvim_win_get_cursor(win)
-      local row = cursor[1]
+      local row, col = cursor[1], cursor[2]
       state.last_cursor_row = state.last_cursor_row or {}
-      if state.last_cursor_row[win] == row then
+      state.last_cursor_col = state.last_cursor_col or {}
+
+      if not scope_cfg.treesitter and state.last_cursor_row[win] == row then
         return
       end
+      if scope_cfg.treesitter and state.last_cursor_row[win] == row and state.last_cursor_col[win] == col then
+        return
+      end
+
       state.last_cursor_row[win] = row
+      state.last_cursor_col[win] = col
 
       local active_col = get_current_indent_col(buf, win)
       state.current_indent = state.current_indent or {}
-      if scope_cfg.range == "block" then
+      if scope_cfg.range == "block" or scope_cfg.treesitter then
         state.current_indent[win] = active_col
         render(buf, win)
       else
