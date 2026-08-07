@@ -7,6 +7,7 @@
 ---@field corner_bottom string|nil Custom bottom corner character
 ---@field underline_char string|nil Custom horizontal connector character for corners
 ---@field text_highlight boolean Whether to colour the text on the scope-start line
+---@field delimiters boolean Whether to highlight scope delimiter characters (braces, brackets, keywords)
 ---@field treesitter boolean Whether to use Treesitter for scope calculation (falls back to indentation if unavailable)
 
 ---@class IndentinatorConfig
@@ -26,6 +27,7 @@
 ---@field current_char_hl string The highlight group for the active guide
 ---@field scope_text_hl string The highlight group for the scope-start line text
 ---@field scope_bg_hl string The highlight group for scope boundary line background
+---@field scope_delimiter_hl string The highlight group for scope delimiter characters
 ---@field exclude_fn (fun(buf: number): boolean)|nil Custom callback to exclude buffers
 ---@field filetypes table<string, table> Per-filetype configuration overrides
 
@@ -107,11 +109,13 @@ M.defaults = {
     corner_bottom = nil,    -- custom bottom corner char (nil defaults to style preset, e.g. "┗")
     underline_char = nil,   -- horizontal character for scope top/bottom lines (nil defaults to style preset, e.g. "━")
     text_highlight = true,  -- colour the text on the scope-start line
+    delimiters = false,     -- highlight delimiter characters (braces, brackets, keywords) at scope boundaries
     treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
   },
   current_char_hl = "IndentinatorCurrentGuide",
   scope_text_hl = "IndentinatorScopeText",
   scope_bg_hl = "IndentinatorScopeBg",
+  scope_delimiter_hl = "IndentinatorScopeDelimiter",
   exclude_fn = nil,
   filetypes = {},
 }

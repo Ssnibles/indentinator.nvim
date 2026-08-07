@@ -146,7 +146,7 @@ Standard highlight definitions:
 | `IndentinatorCurrentGuide` | `#a6adc8` | Current/active guide character colour |
 | `IndentinatorScopeText` | `#cdd6f4` | Foreground colour for scope-start line text |
 | `IndentinatorScopeBg` | `#1c1e2a` | Background colour for active scope block |
-| `IndentinatorScopeDelimiter` | `#f38ba8` | Colour for scope delimiter braces/brackets/keywords |
+| `IndentinatorScopeDelimiter` | `#cdd6f4` | Colour for scope delimiter braces/brackets/keywords (bold, italic, underline) |
 
 Highlights are automatically re-applied on `ColorScheme` events. Customise colours in your configuration after loading your preferred colorscheme:
 
@@ -154,7 +154,7 @@ Highlights are automatically re-applied on `ColorScheme` events. Customise colou
 vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE" })
 vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#a6adc8", bg = "NONE" })
 vim.api.nvim_set_hl(0, "IndentinatorScopeBg", { bg = "#1c1e2a" })
-vim.api.nvim_set_hl(0, "IndentinatorScopeDelimiter", { fg = "#f38ba8", bold = true })
+vim.api.nvim_set_hl(0, "IndentinatorScopeDelimiter", { fg = "#cdd6f4", bold = true, italic = true, underline = true })
 ```
 
 > [!IMPORTANT]
