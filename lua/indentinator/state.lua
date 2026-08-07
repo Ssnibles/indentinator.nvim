@@ -5,6 +5,7 @@
 ---@field current_indent table<number, number|nil> Active column index tracked per window
 ---@field last_cursor_row table<number, number|nil> Last cursor line tracked per window
 ---@field last_cursor_col table<number, number|nil> Last cursor column tracked per window
+---@field last_leftcol table<number, number|nil> Last window leftcol tracked per window
 ---@field timers table<number, uv_timer_t|nil> Per-buffer debounce timers for on_bytes renders
 
 local M = {}
@@ -17,6 +18,7 @@ M.state = {
   current_indent = {},
   last_cursor_row = {},
   last_cursor_col = {},
+  last_leftcol = {},
   timers = {},
 }
 
@@ -61,6 +63,7 @@ function M.clear_win_state(win)
   if M.state.current_indent then M.state.current_indent[win] = nil end
   if M.state.last_cursor_row then M.state.last_cursor_row[win] = nil end
   if M.state.last_cursor_col then M.state.last_cursor_col[win] = nil end
+  if M.state.last_leftcol then M.state.last_leftcol[win] = nil end
 end
 
 return M

@@ -133,24 +133,39 @@ function M.setup(opts)
 			end
 
 			local scope_cfg = config.resolve_scope(buf)
-			if not scope_cfg.enabled then
-				return
-			end
 
 			local cursor = vim.api.nvim_win_get_cursor(win)
 			local row, col = cursor[1], cursor[2]
 			state.last_cursor_row = state.last_cursor_row or {}
 			state.last_cursor_col = state.last_cursor_col or {}
+			state.last_leftcol = state.last_leftcol or {}
 
-			if not scope_cfg.treesitter and state.last_cursor_row[win] == row then
-				return
-			end
-			if scope_cfg.treesitter and state.last_cursor_row[win] == row and state.last_cursor_col[win] == col then
-				return
-			end
+			local ok_lc, leftcol = pcall(function()
+				return vim.api.nvim_win_call(win, function()
+					return vim.fn.winsaveview().leftcol
+				end)
+			end)
+			leftcol = (ok_lc and type(leftcol) == "number") and leftcol or 0
+
+			local row_changed = state.last_cursor_row[win] ~= row
+			local col_changed = state.last_cursor_col[win] ~= col
+			local leftcol_changed = state.last_leftcol[win] ~= leftcol
 
 			state.last_cursor_row[win] = row
 			state.last_cursor_col[win] = col
+			state.last_leftcol[win] = leftcol
+
+			if not scope_cfg.enabled and not leftcol_changed then
+				return
+			end
+
+			if not scope_cfg.treesitter and not row_changed and not leftcol_changed then
+				return
+			end
+
+			if scope_cfg.treesitter and not row_changed and not col_changed and not leftcol_changed then
+				return
+			end
 
 			render.render(buf, win)
 		end,

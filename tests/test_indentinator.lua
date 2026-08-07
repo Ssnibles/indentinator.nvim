@@ -327,5 +327,44 @@ assert_eq(#go_delims >= 2, true, "Go 'func' and '{' detected as opening delimite
 
 print("  ✓ Multi-language AST nodes and delimiter maps verified successfully.")
 
+-- 14. Test Horizontal Scrolling (leftcol) Virtual Text Alignment
+print("[Test 14] Testing Horizontal Scroll (leftcol) Virtual Text Alignment...")
+local config_mod = require("indentinator.config")
+config_mod.values.scope.enabled = false
+config_mod.values.show_first_indent_level = true
+config_mod.values.filetypes = {}
+local scroll_buf = vim.api.nvim_create_buf(true, false)
+vim.api.nvim_buf_set_lines(scroll_buf, 0, -1, false, {
+  "    local short = 1",
+  "                    local long = 2",
+})
+vim.api.nvim_set_option_value("shiftwidth", 4, { buf = scroll_buf })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = scroll_buf })
+vim.api.nvim_win_set_buf(win, scroll_buf)
+vim.api.nvim_win_set_height(win, 10)
+vim.wo[win].foldenable = false
+vim.wo[win].wrap = false
+vim.cmd("redraw")
+
+-- Test leftcol = 0
+vim.fn.winrestview({ leftcol = 0 })
+render.render(scroll_buf, win)
+local marks_col0 = vim.api.nvim_buf_get_extmarks(scroll_buf, render.NS, { 0, 0 }, { -1, -1 }, { details = true })
+assert_eq(#marks_col0, 2, "Should have 2 extmarks (1 per line) when leftcol = 0")
+assert_eq(marks_col0[1][2], 0, "First extmark should be on line 1 (row 0)")
+assert_eq(marks_col0[2][2], 1, "Second extmark should be on line 2 (row 1)")
+
+-- Test leftcol = 10 (horizontal scroll)
+vim.fn.winrestview({ leftcol = 10 })
+render.render(scroll_buf, win)
+local marks_col10 = vim.api.nvim_buf_get_extmarks(scroll_buf, render.NS, { 0, 0 }, { -1, -1 }, { details = true })
+assert_eq(#marks_col10, 1, "Should have 1 extmark (line 2 only) when leftcol = 10")
+assert_eq(marks_col10[1][2], 1, "Remaining extmark should be on line 2 (row 1)")
+local line2_details = marks_col10[1][4]
+assert_eq(line2_details.virt_text_win_col, 0, "Extmark should be positioned at virt_text_win_col = 0")
+assert_eq(#line2_details.virt_text, 10, "Extmark chunks length should be 20 - 10 = 10")
+
+print("  ✓ Horizontal scroll virtual text alignment verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 

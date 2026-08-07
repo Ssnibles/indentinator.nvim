@@ -26,6 +26,7 @@ M.NS = vim.api.nvim_create_namespace("indentinator")
 ---@param current_hl string The current guide highlight group
 ---@param gap_hl string The gap highlight group
 ---@param draw_gap_hl boolean Whether gap highlight is enabled
+---@param start_col number|nil Starting display column index for horizontal scroll (defaults to 0)
 ---@return table[] Array of chunks in format { { text, hl }, ... }
 function M.build_virt_text(
   display_col,
@@ -44,7 +45,8 @@ function M.build_virt_text(
   char_hl,
   current_hl,
   gap_hl,
-  draw_gap_hl
+  draw_gap_hl,
+  start_col
 )
   local chunks = {}
   local u_char = (underline_char and underline_char ~= "") and underline_char or "━"
@@ -52,8 +54,9 @@ function M.build_virt_text(
   local c_bot = (corner_bottom and corner_bottom ~= "") and corner_bottom or "┗"
 
   local step = (width and width > 0) and width or 2
+  start_col = start_col or 0
 
-  local col = 0
+  local col = start_col
   while col < display_col do
     local is_guide_pos = (col % step == 0) or (active_col and col == active_col)
     if col == 0 and not show_first then
@@ -134,14 +137,16 @@ function M.render(buf, win, skip_clear)
     M.clear_window(buf, win)
   end
 
+  local leftcol = 0
   local ok_view, view = pcall(function()
     return vim.api.nvim_win_call(win, function()
-      return { vim.fn.line("w0"), vim.fn.line("w$") }
+      return { vim.fn.line("w0"), vim.fn.line("w$"), vim.fn.winsaveview().leftcol }
     end)
   end)
   if not ok_view or type(view) ~= "table" then return end
   local r0, r1 = view[1], view[2]
   if type(r0) ~= "number" or type(r1) ~= "number" or r1 < r0 or r0 <= 0 then return end
+  leftcol = (type(view[3]) == "number" and view[3] >= 0) and view[3] or 0
 
   local ok_l, lines = pcall(vim.api.nvim_buf_get_lines, buf, r0 - 1, r1, false)
   if not ok_l or #lines == 0 then
@@ -353,7 +358,7 @@ function M.render(buf, win, skip_clear)
         end
       end
 
-      if disp_col and disp_col > 0 then
+      if disp_col and disp_col > leftcol then
         local step_width = line_widths[k] or width
         local chunks = M.build_virt_text(
           disp_col,
@@ -372,9 +377,9 @@ function M.render(buf, win, skip_clear)
           char_hl,
           current_hl,
           gap_hl,
-          draw_gap_hl
+          draw_gap_hl,
+          leftcol
         )
-
         if #chunks > 0 then
           local has_visible = false
           for _, chunk in ipairs(chunks) do
@@ -388,7 +393,7 @@ function M.render(buf, win, skip_clear)
           if has_visible then
             pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
               virt_text = chunks,
-              virt_text_pos = "overlay",
+              virt_text_win_col = 0,
               hl_mode = "combine",
               priority = priority,
             })
