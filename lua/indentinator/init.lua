@@ -284,7 +284,8 @@ function M.get_current_scope(buf, win)
 	local scope_start, scope_end, active_col = nil, nil, nil
 
 	if scope_cfg.treesitter then
-		local ts_start, ts_end, ts_col = require("indentinator.scope").get_treesitter_scope_range(buf, win, width, tabstop)
+		local ts_start, ts_end, ts_col =
+			require("indentinator.scope").get_treesitter_scope_range(buf, win, width, tabstop)
 		if ts_start and ts_end and ts_col then
 			scope_start, scope_end, active_col = ts_start, ts_end, ts_col
 		end
@@ -294,7 +295,8 @@ function M.get_current_scope(buf, win)
 		active_col = utils.get_current_indent_col(buf, win)
 		if active_col then
 			local cursor = vim.api.nvim_win_get_cursor(win)
-			scope_start, scope_end = require("indentinator.scope").get_scope_range(buf, cursor[1], active_col, width, tabstop)
+			scope_start, scope_end =
+				require("indentinator.scope").get_scope_range(buf, cursor[1], active_col, width, tabstop)
 		end
 	end
 

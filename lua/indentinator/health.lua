@@ -55,13 +55,16 @@ function M.check()
     tostring(c.show_first_indent_level), tostring(c.draw_gap_hl)
   ))
   local scope = c.scope or {}
-  health.info(("scope.enabled=%s scope.range=%s scope.underline=%s scope.text_highlight=%s scope.treesitter=%s"):format(
-    tostring(scope.enabled),
-    tostring(scope.range),
-    tostring(scope.underline),
-    tostring(scope.text_highlight),
-    tostring(scope.treesitter)
-  ))
+  health.info(
+    ("scope.enabled=%s scope.range=%s scope.bg=%s scope.delims=%s scope.text_hl=%s scope.ts=%s"):format(
+      tostring(scope.enabled),
+      tostring(scope.range),
+      tostring(scope.background),
+      tostring(scope.delimiters),
+      tostring(scope.text_highlight),
+      tostring(scope.treesitter)
+    )
+  )
   if scope.treesitter then
     if vim.treesitter and vim.treesitter.get_parser then
       health.ok("Treesitter is available for scope calculation")
@@ -69,8 +72,8 @@ function M.check()
       health.warn("scope.treesitter is enabled but vim.treesitter is not available")
     end
   end
-  health.info(("current_char_hl=%s scope_underline_hl=%s exclude_fn_configured=%s"):format(
-    tostring(c.current_char_hl), tostring(c.scope_underline_hl), tostring(c.exclude_fn ~= nil)
+  health.info(("current_char_hl=%s scope_bg_hl=%s scope_delimiter_hl=%s exclude_fn_configured=%s"):format(
+    tostring(c.current_char_hl), tostring(c.scope_bg_hl), tostring(c.scope_delimiter_hl), tostring(c.exclude_fn ~= nil)
   ))
   if #c.exclude > 0 then
     health.info("excluded filetypes: " .. table.concat(c.exclude, ", "))

@@ -1,8 +1,11 @@
 ---@class IndentinatorScopeConfig
 ---@field enabled boolean Whether to highlight the active scope guide
 ---@field range string Scope range: "block" (current block) or "global" (full column)
----@field underline boolean Whether to underline the top line of the active scope
----@field underline_end boolean Whether to underline the bottom line of the active scope
+---@field background boolean|string Highlight scope background: true/"block", "boundaries", or false
+---@field corner boolean Whether to draw corner characters at scope boundaries
+---@field corner_top string|nil Custom top corner character
+---@field corner_bottom string|nil Custom bottom corner character
+---@field underline_char string|nil Custom horizontal connector character for corners
 ---@field text_highlight boolean Whether to colour the text on the scope-start line
 ---@field treesitter boolean Whether to use Treesitter for scope calculation (falls back to indentation if unavailable)
 
@@ -21,8 +24,8 @@
 ---@field priority number The priority level of the extmarks used for the guides
 ---@field scope IndentinatorScopeConfig Active scope highlighting configuration
 ---@field current_char_hl string The highlight group for the active guide
----@field scope_underline_hl string The highlight group for the scope underline
 ---@field scope_text_hl string The highlight group for the scope-start line text
+---@field scope_bg_hl string The highlight group for scope boundary line background
 ---@field exclude_fn (fun(buf: number): boolean)|nil Custom callback to exclude buffers
 ---@field filetypes table<string, table> Per-filetype configuration overrides
 
@@ -98,9 +101,7 @@ M.defaults = {
   scope = {
     enabled = false,        -- highlight the active scope guide
     range = "block",        -- "block" (current block only) or "global" (entire column)
-    underline = false,      -- underline the top line of the active scope block
-    underline_end = false,  -- underline the bottom line of the active scope block
-    underline_style = "underline", -- underline font style: "underline", "underdouble", "undercurl", "underdashed", "underdotted", "none"
+    background = false,     -- highlight scope background: true/"block", "boundaries", or false
     corner = true,          -- draw corner characters (┏ and ┗) at scope top/bottom boundaries
     corner_top = nil,       -- custom top corner char (nil defaults to style preset, e.g. "┏")
     corner_bottom = nil,    -- custom bottom corner char (nil defaults to style preset, e.g. "┗")
@@ -109,8 +110,8 @@ M.defaults = {
     treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
   },
   current_char_hl = "IndentinatorCurrentGuide",
-  scope_underline_hl = "IndentinatorScopeUnderline",
   scope_text_hl = "IndentinatorScopeText",
+  scope_bg_hl = "IndentinatorScopeBg",
   exclude_fn = nil,
   filetypes = {},
 }

@@ -159,38 +159,33 @@ assert_eq(cur_after_top[1], 2, "jump_to_scope top failed")
 
 print("  ✓ Scope API and navigation functions operating correctly.")
 
--- 8. Test Scope Underline Boundaries (No Left Bleed)
-print("[Test 8] Testing Scope Underline Boundaries (No Left Bleed)...")
+-- 8. Test Scope Text Highlight (Scope Start)
+print("[Test 8] Testing Scope Start Text Highlight...")
 ind.setup({
   scope = {
     enabled = true,
-    underline = true,
-    underline_end = true,
+    text_highlight = true,
   },
 })
 ind.force_update()
-local render = require("indentinator.render")
-local line5_extmarks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 4, 0 }, { 4, -1 }, { details = true })
-local found_end_underline = false
-for _, em in ipairs(line5_extmarks) do
-  local col = em[3]
+render = require("indentinator.render")
+local line2_extmarks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 1, 0 }, { 1, -1 }, { details = true })
+local found_text_hl = false
+for _, em in ipairs(line2_extmarks) do
   local details = em[4]
-  if details and details.hl_group == "IndentinatorScopeUnderline" then
-    found_end_underline = true
-    assert_eq(col > 0, true, "Scope end underline should not bleed to column 0")
+  if details and details.hl_group == "IndentinatorScopeText" then
+    found_text_hl = true
   end
 end
-assert_eq(found_end_underline, true, "Scope end underline extmark should be present")
-print("  ✓ Scope underline boundaries verified with zero left bleed.")
+assert_eq(found_text_hl, true, "Scope start text highlight extmark should be present")
+print("  ✓ Scope start text highlight verified successfully.")
 
--- 9. Test Scope Style Presets, Corners and Text Isolation
+-- 9. Test Scope Style Presets, Corners & Text Isolation
 print("[Test 9] Testing Scope Style Presets, Corners & Text Isolation...")
 ind.setup({
   style = "thick",
   scope = {
     enabled = true,
-    underline = true,
-    underline_end = true,
     corner = true,
     treesitter = true,
   },
@@ -221,6 +216,55 @@ assert_eq(scope_cfg.corner_top, "╭", "Curved style top corner resolution faile
 assert_eq(scope_cfg.corner_bottom, "╰", "Curved style bottom corner resolution failed")
 
 print("  ✓ Scope style presets, corners, and text isolation verified successfully.")
+
+-- 10. Test Scope Block Background Highlight
+print("[Test 10] Testing Scope Block Background Highlight...")
+ind.setup({
+  style = "thick",
+  scope = {
+    enabled = true,
+    background = true,
+    treesitter = true,
+  },
+})
+vim.api.nvim_win_set_cursor(win, { 3, 5 })
+ind.force_update()
+vim.wait(50)
+
+local line3_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true })
+local found_inner_bg_extmark = false
+for _, em in ipairs(line3_marks) do
+  local details = em[4]
+  if details and details.line_hl_group == "IndentinatorScopeBg" then
+    found_inner_bg_extmark = true
+  end
+end
+assert_eq(found_inner_bg_extmark, true, "scope.background = true should highlight all lines in active scope block")
+
+print("  ✓ Scope block background highlight verified successfully.")
+
+-- 11. Test Scope Delimiter Highlighting
+print("[Test 11] Testing Scope Delimiter Highlighting...")
+ind.setup({
+  scope = {
+    enabled = true,
+    delimiters = true,
+  },
+})
+vim.api.nvim_win_set_cursor(win, { 3, 5 })
+ind.force_update()
+vim.wait(50)
+
+local delim_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 0, 0 }, { -1, -1 }, { details = true })
+local delim_count = 0
+for _, em in ipairs(delim_marks) do
+  local details = em[4]
+  if details and details.hl_group == "IndentinatorScopeDelimiter" then
+    delim_count = delim_count + 1
+  end
+end
+assert_eq(delim_count >= 2, true, "scope.delimiters = true should produce extmarks for opener/closer keywords")
+print("  ✓ Scope delimiter highlighting verified successfully.")
 
 print("=== All Indentinator Tests Passed! ===")
 

@@ -18,15 +18,12 @@ M.NS = vim.api.nvim_create_namespace("indentinator")
 ---@param current_char string|nil The active scope guide character
 ---@param is_scope_start boolean Whether this line is the scope top boundary
 ---@param is_scope_end boolean Whether this line is the scope bottom boundary
----@param underline_enabled boolean Whether scope.underline is enabled
----@param underline_end_enabled boolean Whether scope.underline_end is enabled
 ---@param use_corner boolean Whether to draw corners
 ---@param corner_top string|nil Top corner character (defaults to ┏)
 ---@param corner_bottom string|nil Bottom corner character (defaults to ┗)
 ---@param underline_char string|nil Horizontal character for scope top/bottom (defaults to ━)
 ---@param char_hl string The standard guide highlight group
 ---@param current_hl string The current guide highlight group
----@param underline_hl string The scope underline highlight group
 ---@param gap_hl string The gap highlight group
 ---@param draw_gap_hl boolean Whether gap highlight is enabled
 ---@return table[] Array of chunks in format { { text, hl }, ... }
@@ -40,15 +37,12 @@ function M.build_virt_text(
   current_char,
   is_scope_start,
   is_scope_end,
-  underline_enabled,
-  underline_end_enabled,
   use_corner,
   corner_top,
   corner_bottom,
   underline_char,
   char_hl,
   current_hl,
-  underline_hl,
   gap_hl,
   draw_gap_hl
 )
@@ -75,12 +69,12 @@ function M.build_virt_text(
       local hl = is_current and current_hl or char_hl
       local guide_c = char
       if is_current then
-        if is_scope_start and (underline_enabled or use_corner) then
-          guide_c = use_corner and c_top or u_char
-          hl = underline_hl or current_hl
-        elseif is_scope_end and (underline_end_enabled or use_corner) then
-          guide_c = use_corner and c_bot or u_char
-          hl = underline_hl or current_hl
+        if is_scope_start and use_corner then
+          guide_c = c_top
+          hl = current_hl
+        elseif is_scope_end and use_corner then
+          guide_c = c_bot
+          hl = current_hl
         else
           guide_c = current_char or char
         end
@@ -89,11 +83,9 @@ function M.build_virt_text(
     else
       local fill_char = " "
       local g_hl = draw_gap_hl and gap_hl or nil
-      if active_col and (col > active_col) and (is_scope_start or is_scope_end) then
-        if (is_scope_start and (underline_enabled or use_corner)) or (is_scope_end and (underline_end_enabled or use_corner)) then
-          fill_char = u_char
-          g_hl = underline_hl or current_hl
-        end
+      if active_col and (col > active_col) and (is_scope_start or is_scope_end) and use_corner then
+        fill_char = u_char
+        g_hl = current_hl
       end
       table.insert(chunks, { fill_char, g_hl })
     end
@@ -270,11 +262,14 @@ function M.render(buf, win)
   local gap_hl = config.resolve_config(buf, "gap_hl", ft)
   local draw_gap_hl = config.resolve_config(buf, "draw_gap_hl", ft)
   local priority = config.resolve_config(buf, "priority", ft)
-  local underline_enabled = scope_cfg.underline == true
-  local underline_end_enabled = scope_cfg.underline_end == true
-  local underline_hl = config.resolve_config(buf, "scope_underline_hl", ft)
+  local bg_opt = scope_cfg.background
+  local bg_enabled = bg_opt == true or bg_opt == "block" or bg_opt == "boundaries"
+  local bg_full_block = bg_opt == true or bg_opt == "block"
+  local bg_hl = config.resolve_config(buf, "scope_bg_hl", ft)
   local text_highlight_enabled = scope_cfg.text_highlight ~= false
   local text_hl = config.resolve_config(buf, "scope_text_hl", ft)
+  local delimiters_enabled = scope_cfg.delimiters == true
+  local delim_hl = config.resolve_config(buf, "scope_delimiter_hl", ft)
 
   local use_corner = scope_cfg.corner ~= false
   local corner_top = scope_cfg.corner_top
@@ -311,73 +306,47 @@ function M.render(buf, win)
     if not is_hidden_fold then
       local is_this_scope_start = (scope_start ~= nil and abs_line == scope_start)
       local is_this_scope_end = (scope_end ~= nil and abs_line == scope_end and scope_end > (scope_start or 0))
+      local is_in_scope = (scope_start ~= nil and scope_end ~= nil
+        and abs_line >= scope_start and abs_line <= scope_end)
 
-      if is_this_scope_start and (underline_enabled or text_highlight_enabled) and not occupied[abs_line] then
-        local scope_line_text = lines[k]
-        local text_len = #scope_line_text
-        local lead_len = #(scope_line_text:match("^%s*"))
-        local start_byte = lead_len
-        if active_col and active_col > 0 then
-          local dcol = 0
-          local i = 1
-          while i <= text_len and dcol < active_col do
-            local b = scope_line_text:byte(i)
-            dcol = dcol + (b == 9 and (tabstop - (dcol % tabstop)) or 1)
-            if dcol <= active_col then start_byte = i end
-            i = i + 1
-          end
-          start_byte = math.max(start_byte, lead_len)
-        end
-        if text_len > start_byte then
-          if underline_enabled then
-            pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, start_byte, {
-              end_row = line_idx,
-              end_col = text_len,
-              hl_group = underline_hl,
-              hl_eol = false,
-              hl_mode = "combine",
-              priority = priority + 1,
-            })
-          end
-          if text_highlight_enabled then
-            if text_len > lead_len then
-              pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, lead_len, {
-                end_row = line_idx,
-                end_col = text_len,
-                hl_group = text_hl,
-                hl_eol = false,
-                hl_mode = "combine",
-                priority = priority + 101,
-              })
-            end
-          end
+      if is_in_scope and bg_enabled and not occupied[abs_line] then
+        if bg_full_block or is_this_scope_start or is_this_scope_end then
+          pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
+            end_row = line_idx,
+            end_col = 0,
+            line_hl_group = bg_hl,
+            priority = priority + 2,
+          })
         end
       end
 
-      if is_this_scope_end and underline_end_enabled and not occupied[abs_line] then
-        local scope_end_text = lines[k]
-        local text_len = #scope_end_text
-        local lead_len = #(scope_end_text:match("^%s*"))
-        local start_byte = lead_len
-        if active_col and active_col > 0 then
-          local dcol = 0
-          local i = 1
-          while i <= text_len and dcol < active_col do
-            local b = scope_end_text:byte(i)
-            dcol = dcol + (b == 9 and (tabstop - (dcol % tabstop)) or 1)
-            if dcol <= active_col then start_byte = i end
-            i = i + 1
-          end
-          start_byte = math.max(start_byte, lead_len)
-        end
-        if text_len > start_byte then
-          pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, start_byte, {
+      if is_this_scope_start and text_highlight_enabled and not occupied[abs_line] then
+        local scope_line_text = lines[k]
+        local text_len = #scope_line_text
+        local lead_len = #(scope_line_text:match("^%s*"))
+        if text_len > lead_len then
+          pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, lead_len, {
             end_row = line_idx,
             end_col = text_len,
-            hl_group = underline_hl,
+            hl_group = text_hl,
             hl_eol = false,
             hl_mode = "combine",
-            priority = priority + 1,
+            priority = priority + 101,
+          })
+        end
+      end
+
+      if delimiters_enabled and (is_this_scope_start or is_this_scope_end) and not occupied[abs_line] then
+        local line_text = lines[k]
+        local delims = scope.find_delimiters(line_text, is_this_scope_start)
+        for _, range in ipairs(delims) do
+          pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, range[1], {
+            end_row = line_idx,
+            end_col = range[2],
+            hl_group = delim_hl,
+            hl_eol = false,
+            hl_mode = "combine",
+            priority = priority + 105,
           })
         end
       end
@@ -405,15 +374,12 @@ function M.render(buf, win)
           current_char,
           is_this_scope_start,
           is_this_scope_end,
-          underline_enabled,
-          underline_end_enabled,
           use_corner,
           corner_top,
           corner_bottom,
           underline_char,
           char_hl,
           current_hl,
-          underline_hl,
           gap_hl,
           draw_gap_hl
         )
@@ -497,30 +463,19 @@ end
 
 --- Initialises the default highlight groups.
 function M.set_hl()
-  local scope_style = { fg = "#cdd6f4", bold = true, sp = "#cdd6f4", default = true }
-  local style_opt = (config.values and config.values.scope and config.values.scope.underline_style)
-    or (config.defaults and config.defaults.scope and config.defaults.scope.underline_style)
-    or "underline"
-
-  if style_opt == "underdouble" then
-    scope_style.underdouble = true
-  elseif style_opt == "undercurl" then
-    scope_style.undercurl = true
-  elseif style_opt == "underdashed" then
-    scope_style.underdashed = true
-  elseif style_opt == "underdotted" then
-    scope_style.underdotted = true
-  elseif style_opt == "none" then
-    scope_style.underline = false
-  else
-    scope_style.underline = true
-  end
-
   vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE", default = true })
   vim.api.nvim_set_hl(0, "IndentinatorGap", { fg = "#555b6e", bg = "NONE", default = true })
   vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
-  vim.api.nvim_set_hl(0, "IndentinatorScopeUnderline", scope_style)
   vim.api.nvim_set_hl(0, "IndentinatorScopeText", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
+  vim.api.nvim_set_hl(0, "IndentinatorScopeBg", { bg = "#1c1e2a", default = true })
+  vim.api.nvim_set_hl(0, "IndentinatorScopeDelimiter", {
+    fg = "#cdd6f4",
+    bold = true,
+    italic = true,
+    underline = true,
+    sp = "#cdd6f4",
+    default = true,
+  })
 end
 
 return M

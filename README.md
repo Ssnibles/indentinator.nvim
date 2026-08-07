@@ -13,8 +13,7 @@ A lightweight, high-performance indentation guides plugin for Neovim. Written in
 
 - **Viewport-Bounded**: Only computes and paints guides for lines visible in the active viewport.
 - **Smart Guide Continuity**: Empty lines inherit guides from surrounding blocks (`smart = false`) or break them (`smart = true`).
-- **Scope Highlighting & Treesitter**: Highlights the current indentation level based on cursor position, with Treesitter AST node detection that ignores comments/strings and supports multi-language AST containers.
-- **Scope Underlining (Start & End)**: Optionally underline the top line (`underline = true`) and/or closing line (`underline_end = true`) of the active block scope.
+- **Scope Background & Highlight**: Highlights active block scope background (`background = true`) and scope-start line text.
 - **Scope Navigation**: Command `:IndentinatorScopeJump` to jump cursor to top or bottom of the active block.
 - **Statusline Integration**: Helper function `require("indentinator").statusline()` for Lualine/Heirline integration.
 - **Dynamic Overrides**: Customize options per filetype or exclude specific buffer types.
@@ -104,8 +103,7 @@ require("indentinator").setup({
   scope = {
     enabled = false,        -- highlight the guide at the cursor's active scope
     range = "block",        -- "block" (current block only) or "global" (entire column)
-    underline = false,      -- underline the top line of the active scope block
-    underline_end = false,  -- underline the bottom line of the active scope block
+    background = false,     -- highlight scope block background: true/"block" (all lines), "boundaries" (top/bottom), or false
     corner = true,          -- draw top/bottom corners at active scope boundaries
     corner_top = nil,       -- custom top corner char (nil defaults to style preset, e.g. "┏" or "╭")
     corner_bottom = nil,    -- custom bottom corner char (nil defaults to style preset, e.g. "┗" or "╰")
@@ -115,8 +113,9 @@ require("indentinator").setup({
   },
 
   current_char_hl = "IndentinatorCurrentGuide",     -- Highlight group for the active guide
-  scope_underline_hl = "IndentinatorScopeUnderline", -- Highlight group for the scope underline
   scope_text_hl = "IndentinatorScopeText",           -- Highlight group for scope-start text
+  scope_bg_hl = "IndentinatorScopeBg",               -- Highlight group for active scope block background
+  scope_delimiter_hl = "IndentinatorScopeDelimiter", -- Highlight group for scope delimiter characters (braces, keywords)
   exclude_fn = nil,                  -- Custom callback: fun(buf: number): boolean (true to exclude)
   exclude = {},                      -- List of excluded filetypes, e.g. { "help", "markdown" }
   exclude_buftypes = {               -- List of excluded buftypes
@@ -145,38 +144,31 @@ Standard highlight definitions:
 | `IndentinatorGuide` | `#555b6e` | Default guide character colour |
 | `IndentinatorGap` | `#555b6e` | Gap fill colour (when `draw_gap_hl = true`) |
 | `IndentinatorCurrentGuide` | `#a6adc8` | Current/active guide character colour |
-| `IndentinatorScopeUnderline` | `#a6adc8` (underlined) | Underline style for top/bottom of active scopes |
-| `IndentinatorScopeText` | `#a6adc8` | Foreground colour for scope-start line text |
+| `IndentinatorScopeText` | `#cdd6f4` | Foreground colour for scope-start line text |
+| `IndentinatorScopeBg` | `#1c1e2a` | Background colour for active scope block |
+| `IndentinatorScopeDelimiter` | `#f38ba8` | Colour for scope delimiter braces/brackets/keywords |
 
 Highlights are automatically re-applied on `ColorScheme` events. Customise colours in your configuration after loading your preferred colorscheme:
 
 ```lua
 vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE" })
 vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#a6adc8", bg = "NONE" })
-vim.api.nvim_set_hl(0, "IndentinatorScopeUnderline", { fg = "#a6adc8", bg = "NONE", underline = true })
+vim.api.nvim_set_hl(0, "IndentinatorScopeBg", { bg = "#1c1e2a" })
+vim.api.nvim_set_hl(0, "IndentinatorScopeDelimiter", { fg = "#f38ba8", bold = true })
 ```
 
 > [!IMPORTANT]
-> Always set `bg = "NONE"` on these highlight groups to prevent guides from obscuring background styling (such as diagnostics, search highlights, or colorcolumns).
+> Always set `bg = "NONE"` on guide character highlight groups (`IndentinatorGuide`, `IndentinatorCurrentGuide`) to prevent guides from obscuring background styling.
 
-### Scope Underline Example
+### Scope Background Example
 
-With `scope.enabled` and `scope.underline` (or `scope.underline_end`) set to `true`, the first/last lines of the active block get an underline when the cursor is inside it:
-
-```lua
--- "callback = function(ev)" is underlined when cursor is inside this block:
-callback = function(ev)
-  vim.keymap.set("n", "q", "<cmd>close<CR>", { buffer = ev.buf, silent = true })
-  vim.keymap.set("n", "<Esc>", "<cmd>close<CR>", { buffer = ev.buf, silent = true })
-end,
-```
+With `scope.enabled = true` and `scope.background = true`, all lines in the current block scope receive a subtle background highlight:
 
 ```lua
 require("indentinator").setup({
   scope = {
     enabled = true,
-    underline = true,
-    underline_end = true,
+    background = true, -- Highlights active scope block lines
   },
 })
 ```

@@ -248,4 +248,52 @@ function M.get_treesitter_scope_range(buf, win, _width, tabstop)
   return scope_start, scope_end, active_col
 end
 
+--- Finds delimiter byte ranges (0-indexed col start/end) on line_text for scope start (is_start=true)
+--- or scope end (is_start=false).
+---@param line_text string
+---@param is_start boolean
+---@return table[] List of { s_col, e_col }
+function M.find_delimiters(line_text, is_start)
+  if not line_text or line_text == "" then return {} end
+  local matches = {}
+
+  if is_start then
+    local open_keywords = {
+      "for", "while", "if", "elseif", "else", "repeat", "until", "do", "then",
+      "begin", "function", "fn", "def", "class", "struct", "switch", "case",
+      "select", "try", "catch", "except", "finally"
+    }
+    for _, kw in ipairs(open_keywords) do
+      local s, e = line_text:find("%f[%a]" .. kw .. "%f[%A]")
+      if s and e then
+        table.insert(matches, { s - 1, e })
+      end
+    end
+
+    for col = 1, #line_text do
+      local char = line_text:sub(col, col)
+      if char == "{" or char == "[" then
+        table.insert(matches, { col - 1, col })
+      end
+    end
+  else
+    local close_keywords = { "end", "done", "fi", "esac" }
+    for _, kw in ipairs(close_keywords) do
+      local s, e = line_text:find("%f[%a]" .. kw .. "%f[%A]")
+      if s and e then
+        table.insert(matches, { s - 1, e })
+      end
+    end
+
+    for col = 1, #line_text do
+      local char = line_text:sub(col, col)
+      if char == "}" or char == "]" then
+        table.insert(matches, { col - 1, col })
+      end
+    end
+  end
+
+  return matches
+end
+
 return M
