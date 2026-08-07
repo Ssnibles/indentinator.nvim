@@ -245,7 +245,61 @@ function M.get_treesitter_scope_range(buf, win, _width, tabstop)
     active_col = utils.lead_display_width(lead or "", tabstop)
   end
 
-  return scope_start, scope_end, active_col
+  return scope_start, scope_end, active_col, scope_node
+end
+
+--- Extracts delimiter byte ranges directly from Treesitter AST node children on target_row.
+---@param scope_node userdata|nil Treesitter TSNode
+---@param target_row number 0-indexed line row
+---@param is_start boolean True for scope start line, false for scope end line
+---@return table[] List of { s_col, e_col }
+function M.get_treesitter_delimiters(scope_node, target_row, is_start)
+  if not scope_node then return {} end
+  local matches = {}
+  local child_count = scope_node:child_count()
+
+  local open_types = {
+    ["{"] = true, ["("] = true, ["["] = true, [":"] = true,
+    ["do"] = true, ["then"] = true, ["begin"] = true, ["function"] = true,
+    ["fn"] = true, ["def"] = true, ["class"] = true, ["struct"] = true,
+    ["if"] = true, ["elseif"] = true, ["else"] = true, ["for"] = true,
+    ["while"] = true, ["repeat"] = true, ["until"] = true, ["switch"] = true,
+    ["case"] = true, ["try"] = true, ["catch"] = true, ["except"] = true,
+    ["finally"] = true, ["select"] = true,
+  }
+
+  local close_types = {
+    ["}"] = true, [")"] = true, ["]"] = true,
+    ["end"] = true, ["done"] = true, ["fi"] = true, ["esac"] = true,
+  }
+
+  local valid_types = is_start and open_types or close_types
+
+  for i = 0, child_count - 1 do
+    local child = scope_node:child(i)
+    if child then
+      local s_row, s_col, e_row, e_col = child:range()
+      if s_row == target_row and e_row == target_row then
+        local t = child:type()
+        if valid_types[t] then
+          table.insert(matches, { s_col, e_col })
+        end
+      end
+    end
+  end
+
+  return matches
+end
+
+--- Sanitizes line text by masking string literals and stripping single-line comments.
+---@param line_text string
+---@return string Sanitized line text with strings replaced by spaces and comments stripped
+local function sanitize_line(line_text)
+  if not line_text then return "" end
+  local clean = line_text:gsub("%-%-.*$", ""):gsub("//.*$", ""):gsub("#.*$", "")
+  clean = clean:gsub('"[^"]*"', function(m) return string.rep(" ", #m) end)
+  clean = clean:gsub("'[^']*'", function(m) return string.rep(" ", #m) end)
+  return clean
 end
 
 --- Finds delimiter byte ranges (0-indexed col start/end) on line_text for scope start (is_start=true)
@@ -255,6 +309,7 @@ end
 ---@return table[] List of { s_col, e_col }
 function M.find_delimiters(line_text, is_start)
   if not line_text or line_text == "" then return {} end
+  local clean_text = sanitize_line(line_text)
   local matches = {}
 
   if is_start then
@@ -264,14 +319,14 @@ function M.find_delimiters(line_text, is_start)
       "select", "try", "catch", "except", "finally"
     }
     for _, kw in ipairs(open_keywords) do
-      local s, e = line_text:find("%f[%a]" .. kw .. "%f[%A]")
+      local s, e = clean_text:find("%f[%a]" .. kw .. "%f[%A]")
       if s and e then
         table.insert(matches, { s - 1, e })
       end
     end
 
-    for col = 1, #line_text do
-      local char = line_text:sub(col, col)
+    for col = 1, #clean_text do
+      local char = clean_text:sub(col, col)
       if char == "{" or char == "[" then
         table.insert(matches, { col - 1, col })
       end
@@ -279,14 +334,14 @@ function M.find_delimiters(line_text, is_start)
   else
     local close_keywords = { "end", "done", "fi", "esac" }
     for _, kw in ipairs(close_keywords) do
-      local s, e = line_text:find("%f[%a]" .. kw .. "%f[%A]")
+      local s, e = clean_text:find("%f[%a]" .. kw .. "%f[%A]")
       if s and e then
         table.insert(matches, { s - 1, e })
       end
     end
 
-    for col = 1, #line_text do
-      local char = line_text:sub(col, col)
+    for col = 1, #clean_text do
+      local char = clean_text:sub(col, col)
       if char == "}" or char == "]" then
         table.insert(matches, { col - 1, col })
       end

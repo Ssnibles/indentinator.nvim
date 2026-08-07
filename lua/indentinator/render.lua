@@ -146,21 +146,14 @@ function M.render(buf, win)
   local tabstop = utils.buffer_tabstop(buf)
   local show_first = config.resolve_config(buf, "show_first_indent_level", ft)
 
-  local active_col = nil
-  local scope_start, scope_end = nil, nil
+  local scope_start, scope_end, active_col, scope_node = nil, nil, nil, nil
   local scope_cfg = config.resolve_scope(buf, ft)
   local show_current = scope_cfg.enabled
   if show_current then
     if scope_cfg.treesitter then
-      local ts_start, ts_end, ts_col = scope.get_treesitter_scope_range(buf, win, width, tabstop)
-      if ts_start and ts_end and ts_col then
-        scope_start = ts_start
-        scope_end = ts_end
-        active_col = ts_col
-      end
+      scope_start, scope_end, active_col, scope_node = scope.get_treesitter_scope_range(buf, win, width, tabstop)
     end
-
-    if active_col == nil then
+    if scope_start == nil then
       active_col = utils.get_current_indent_col(buf, win)
       if active_col and scope_cfg.range == "block" then
         local cursor = vim.api.nvim_win_get_cursor(win)
@@ -337,8 +330,14 @@ function M.render(buf, win)
       end
 
       if delimiters_enabled and (is_this_scope_start or is_this_scope_end) and not occupied[abs_line] then
-        local line_text = lines[k]
-        local delims = scope.find_delimiters(line_text, is_this_scope_start)
+        local delims = nil
+        if scope_node then
+          delims = scope.get_treesitter_delimiters(scope_node, line_idx, is_this_scope_start)
+        end
+        if not delims or #delims == 0 then
+          local line_text = lines[k]
+          delims = scope.find_delimiters(line_text, is_this_scope_start)
+        end
         for _, range in ipairs(delims) do
           pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, range[1], {
             end_row = line_idx,
