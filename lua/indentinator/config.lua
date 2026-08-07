@@ -47,6 +47,7 @@ M.defaults = {
     range = "block",        -- "block" (current block only) or "global" (entire column)
     underline = false,      -- underline the top line of the active scope block
     underline_end = false,  -- underline the bottom line of the active scope block
+    underline_style = "underdouble", -- underline style: "underdouble", "underline", "undercurl", "underdashed", "underdotted"
     text_highlight = true,  -- colour the text on the scope-start line
     treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
   },

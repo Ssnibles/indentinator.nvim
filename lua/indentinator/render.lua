@@ -452,14 +452,24 @@ end
 
 --- Initialises the default highlight groups.
 function M.set_hl()
+  local scope_style = { fg = "#cdd6f4", bold = true, sp = "#cdd6f4", default = true }
+  local style_opt = config.defaults and config.defaults.scope and config.defaults.scope.underline_style or "underdouble"
+  if style_opt == "underdouble" then
+    scope_style.underdouble = true
+  elseif style_opt == "undercurl" then
+    scope_style.undercurl = true
+  elseif style_opt == "underdashed" then
+    scope_style.underdashed = true
+  elseif style_opt == "underdotted" then
+    scope_style.underdotted = true
+  else
+    scope_style.underline = true
+  end
+
   vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE", default = true })
   vim.api.nvim_set_hl(0, "IndentinatorGap", { fg = "#555b6e", bg = "NONE", default = true })
   vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
-  vim.api.nvim_set_hl(
-    0,
-    "IndentinatorScopeUnderline",
-    { fg = "#cdd6f4", bold = true, underline = true, sp = "#cdd6f4", default = true }
-  )
+  vim.api.nvim_set_hl(0, "IndentinatorScopeUnderline", scope_style)
   vim.api.nvim_set_hl(0, "IndentinatorScopeText", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
 end
 
