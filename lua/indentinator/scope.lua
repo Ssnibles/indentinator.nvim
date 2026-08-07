@@ -296,63 +296,129 @@ function M.get_treesitter_scope_range(buf, win, _width, tabstop)
   return scope_start, scope_end, active_col, scope_node
 end
 
---- Extracts delimiter byte ranges directly from Treesitter AST node children on target_row.
+--- Recursively collects leaf delimiter nodes matching valid_types on target_row.
+---@param node userdata TSNode
+---@param target_row number 0-indexed line row
+---@param valid_types table<string, boolean>
+---@param matches table[] Array of { s_col, e_col }
+---@param visited table<string|number, boolean>
+local function collect_leaf_delimiters(node, target_row, valid_types, matches, visited)
+  if not node then return end
+  local ok_id, id = pcall(function() return node:id() end)
+  id = (ok_id and id) or tostring(node)
+  if visited[id] then return end
+  visited[id] = true
+
+  local type_name = node:type()
+  if M.IGNORE_AST_TYPES[type_name] then return end
+
+  local s_row, s_col, e_row, e_col = node:range()
+  if s_row > target_row or e_row < target_row then return end
+
+  local child_count = node:child_count()
+  if child_count == 0 then
+    if s_row == target_row and e_row == target_row then
+      if valid_types[type_name] then
+        table.insert(matches, { s_col, e_col })
+      end
+    end
+  else
+    for i = 0, child_count - 1 do
+      local child = node:child(i)
+      if child then
+        collect_leaf_delimiters(child, target_row, valid_types, matches, visited)
+      end
+    end
+  end
+end
+
+--- Extracts delimiter byte ranges directly from Treesitter AST nodes on target_row.
 ---@param scope_node userdata|nil Treesitter TSNode
 ---@param target_row number 0-indexed line row
 ---@param is_start boolean True for scope start line, false for scope end line
 ---@return table[] List of { s_col, e_col }
 function M.get_treesitter_delimiters(scope_node, target_row, is_start)
   if not scope_node then return {} end
-  local matches = {}
-  local child_count = scope_node:child_count()
+  local raw_matches = {}
 
   local open_types = {
     ["{"] = true, ["("] = true, ["["] = true, [":"] = true,
-    ["<"] = true, ["<?php"] = true,
+    ["<"] = true, ["<?php"] = true, ["<?"] = true,
     ["do"] = true, ["then"] = true, ["begin"] = true, ["function"] = true,
-    ["func"] = true, ["fn"] = true, ["def"] = true, ["class"] = true,
-    ["struct"] = true, ["enum"] = true, ["union"] = true, ["interface"] = true,
-    ["trait"] = true, ["impl"] = true, ["module"] = true, ["namespace"] = true,
-    ["package"] = true, ["type"] = true, ["import"] = true,
-    ["if"] = true, ["elseif"] = true, ["elif"] = true, ["else"] = true,
-    ["for"] = true, ["while"] = true, ["repeat"] = true, ["until"] = true,
+    ["func"] = true, ["fn"] = true, ["fun"] = true, ["def"] = true, ["defp"] = true,
+    ["defmodule"] = true, ["defmacro"] = true, ["defprotocol"] = true, ["defimpl"] = true,
+    ["class"] = true, ["struct"] = true, ["enum"] = true, ["union"] = true,
+    ["interface"] = true, ["trait"] = true, ["impl"] = true, ["module"] = true,
+    ["namespace"] = true, ["package"] = true, ["type"] = true, ["import"] = true,
+    ["if"] = true, ["elseif"] = true, ["elif"] = true, ["elsif"] = true, ["else"] = true,
+    ["for"] = true, ["foreach"] = true, ["while"] = true, ["repeat"] = true, ["until"] = true,
     ["loop"] = true, ["match"] = true, ["switch"] = true, ["case"] = true,
     ["select"] = true, ["try"] = true, ["catch"] = true, ["except"] = true,
     ["finally"] = true, ["rescue"] = true, ["ensure"] = true, ["unless"] = true,
     ["with"] = true, ["where"] = true, ["defer"] = true, ["go"] = true,
+    ["pub"] = true, ["public"] = true, ["private"] = true, ["protected"] = true,
+    ["static"] = true, ["async"] = true, ["unsafe"] = true, ["override"] = true,
+    ["default"] = true, ["when"] = true, ["of"] = true, ["guard"] = true,
+    ["proc"] = true, ["method"] = true, ["iterator"] = true, ["macro"] = true,
+    ["template"] = true, ["concept"] = true, ["record"] = true, ["cond"] = true,
+    ["receive"] = true, ["test"] = true, ["=>"] = true, ["->"] = true, [":="] = true,
+    ["</"] = true, ["/>"] = true,
+    ["function_keyword"] = true, ["def_keyword"] = true, ["class_keyword"] = true,
+    ["if_keyword"] = true, ["for_keyword"] = true, ["while_keyword"] = true,
+    ["try_keyword"] = true, ["catch_keyword"] = true, ["struct_keyword"] = true,
+    ["enum_keyword"] = true, ["interface_keyword"] = true, ["trait_keyword"] = true,
+    ["fn_keyword"] = true, ["type_keyword"] = true,
   }
 
   local close_types = {
     ["}"] = true, [")"] = true, ["]"] = true, [">"] = true, ["?>"] = true,
     ["end"] = true, ["done"] = true, ["fi"] = true, ["esac"] = true,
+    ["endfunction"] = true, ["endif"] = true, ["endfor"] = true, ["endforeach"] = true,
+    ["endwhile"] = true, ["endswitch"] = true, ["enddeclare"] = true,
+    ["rescue"] = true, ["ensure"] = true, ["catch"] = true, ["finally"] = true,
+    ["except"] = true, ["else"] = true, ["elif"] = true, ["elseif"] = true,
+    ["elsif"] = true, ["until"] = true, ["/>"] = true, ["</"] = true,
   }
 
   local valid_types = is_start and open_types or close_types
+  local visited = {}
 
-  for i = 0, child_count - 1 do
-    local child = scope_node:child(i)
-    if child then
-      local s_row, s_col, e_row, e_col = child:range()
-      if s_row == target_row and e_row == target_row then
-        local t = child:type()
-        if valid_types[t] then
-          table.insert(matches, { s_col, e_col })
-        end
-      end
+  collect_leaf_delimiters(scope_node, target_row, valid_types, raw_matches, visited)
+
+  -- Check parent node if it starts on target_row
+  local parent = scope_node:parent()
+  if parent then
+    local p_s_row, _, _, _ = parent:range()
+    if p_s_row == target_row then
+      collect_leaf_delimiters(parent, target_row, valid_types, raw_matches, visited)
     end
   end
+
+  local unique = {}
+  local matches = {}
+  for _, m in ipairs(raw_matches) do
+    local key = m[1] .. ":" .. m[2]
+    if not unique[key] then
+      unique[key] = true
+      table.insert(matches, m)
+    end
+  end
+  table.sort(matches, function(a, b) return a[1] < b[1] end)
 
   return matches
 end
 
---- Sanitizes line text by masking string literals and stripping single-line comments.
+--- Sanitizes line text by masking string literals and stripping comments.
 ---@param line_text string
 ---@return string Sanitized line text with strings replaced by spaces and comments stripped
 local function sanitize_line(line_text)
   if not line_text then return "" end
   local clean = line_text:gsub("%-%-.*$", ""):gsub("//.*$", ""):gsub("#.*$", "")
+  clean = clean:gsub("/%*.-%*/", function(m) return string.rep(" ", #m) end)
+  clean = clean:gsub("<!%-%-.-%-%->", function(m) return string.rep(" ", #m) end)
   clean = clean:gsub('"[^"]*"', function(m) return string.rep(" ", #m) end)
   clean = clean:gsub("'[^']*'", function(m) return string.rep(" ", #m) end)
+  clean = clean:gsub("`[^`]*`", function(m) return string.rep(" ", #m) end)
   return clean
 end
 
@@ -364,45 +430,62 @@ end
 function M.find_delimiters(line_text, is_start)
   if not line_text or line_text == "" then return {} end
   local clean_text = sanitize_line(line_text)
-  local matches = {}
+  local raw_matches = {}
 
   if is_start then
     local open_keywords = {
-      "for", "while", "if", "elseif", "elif", "else", "repeat", "until", "do", "then",
-      "begin", "function", "func", "fn", "def", "class", "struct", "enum", "union",
-      "interface", "trait", "impl", "module", "namespace", "package", "type",
-      "switch", "case", "select", "try", "catch", "except", "finally", "rescue",
-      "ensure", "unless", "with", "where", "loop", "match", "defer", "go"
+      "for", "foreach", "while", "if", "elseif", "elif", "elsif", "else", "repeat", "until",
+      "do", "then", "begin", "function", "func", "fn", "fun", "def", "defp", "defmodule",
+      "defmacro", "defprotocol", "defimpl", "class", "struct", "enum", "union", "interface",
+      "trait", "impl", "module", "namespace", "package", "type", "switch", "case", "select",
+      "try", "catch", "except", "finally", "rescue", "ensure", "unless", "with", "where",
+      "loop", "match", "defer", "go", "pub", "public", "private", "protected", "static",
+      "async", "unsafe", "override", "default", "when", "of", "guard", "proc", "method",
+      "iterator", "macro", "template", "concept", "record", "cond", "receive", "test"
     }
     for _, kw in ipairs(open_keywords) do
       local s, e = clean_text:find("%f[%a]" .. kw .. "%f[%A]")
       if s and e then
-        table.insert(matches, { s - 1, e })
+        table.insert(raw_matches, { s - 1, e })
       end
     end
 
     for col = 1, #clean_text do
       local char = clean_text:sub(col, col)
       if char == "{" or char == "[" or char == "(" then
-        table.insert(matches, { col - 1, col })
+        table.insert(raw_matches, { col - 1, col })
       end
     end
   else
-    local close_keywords = { "end", "done", "fi", "esac", "rescue", "ensure" }
+    local close_keywords = {
+      "end", "done", "fi", "esac", "rescue", "ensure", "until", "endif", "endfunction",
+      "endfor", "endforeach", "endwhile", "endswitch", "enddeclare"
+    }
     for _, kw in ipairs(close_keywords) do
       local s, e = clean_text:find("%f[%a]" .. kw .. "%f[%A]")
       if s and e then
-        table.insert(matches, { s - 1, e })
+        table.insert(raw_matches, { s - 1, e })
       end
     end
 
     for col = 1, #clean_text do
       local char = clean_text:sub(col, col)
       if char == "}" or char == "]" or char == ")" then
-        table.insert(matches, { col - 1, col })
+        table.insert(raw_matches, { col - 1, col })
       end
     end
   end
+
+  local unique = {}
+  local matches = {}
+  for _, m in ipairs(raw_matches) do
+    local key = m[1] .. ":" .. m[2]
+    if not unique[key] then
+      unique[key] = true
+      table.insert(matches, m)
+    end
+  end
+  table.sort(matches, function(a, b) return a[1] < b[1] end)
 
   return matches
 end

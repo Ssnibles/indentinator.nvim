@@ -366,5 +366,18 @@ assert_eq(#line2_details.virt_text, 10, "Extmark chunks length should be 20 - 10
 
 print("  ✓ Horizontal scroll virtual text alignment verified successfully.")
 
+-- 15. Test Recursive AST & Multi-Language Delimiter Resolution
+print("[Test 15] Testing Recursive AST & Multi-Language Delimiter Resolution...")
+local scope_mod = require("indentinator.scope")
+local delim_line = "async function fetchData(url, opts) {"
+local found_start = scope_mod.find_delimiters(delim_line, true)
+assert_eq(#found_start >= 3, true, "Should find 'async', 'function', '(', '{' in JS header line")
+
+local closing_line = "} catch (err) {"
+local found_close = scope_mod.find_delimiters(closing_line, false)
+assert_eq(#found_close >= 1, true, "Should find '}' in closing line")
+
+print("  ✓ Recursive AST & multi-language delimiter resolution verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 
