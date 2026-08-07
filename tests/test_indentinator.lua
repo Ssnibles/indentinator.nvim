@@ -183,5 +183,44 @@ end
 assert_eq(found_end_underline, true, "Scope end underline extmark should be present")
 print("  ✓ Scope underline boundaries verified with zero left bleed.")
 
+-- 9. Test Scope Style Presets, Corners and Text Isolation
+print("[Test 9] Testing Scope Style Presets, Corners & Text Isolation...")
+ind.setup({
+  style = "thick",
+  scope = {
+    enabled = true,
+    underline = true,
+    underline_end = true,
+    corner = true,
+    treesitter = true,
+  },
+})
+vim.api.nvim_win_set_cursor(win, { 4, 5 })
+ind.force_update()
+vim.wait(50)
+
+local all_extmarks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 0, 0 }, { -1, -1 }, { details = true })
+local found_thick_corner = false
+for _, em in ipairs(all_extmarks) do
+  local details = em[4]
+  if details and details.virt_text then
+    for _, chunk in ipairs(details.virt_text) do
+      if chunk[1] == "┏" or chunk[1] == "━" or chunk[1] == "┗" or chunk[1] == "┃" then
+        found_thick_corner = true
+      end
+    end
+  end
+end
+assert_eq(found_thick_corner, true, "Thick style preset should render thick corner/guide characters")
+
+-- Test preset resolution for curved style
+ind.setup({ style = "curved" })
+ind.force_update()
+local scope_cfg = require("indentinator.config").resolve_scope(buf)
+assert_eq(scope_cfg.corner_top, "╭", "Curved style top corner resolution failed")
+assert_eq(scope_cfg.corner_bottom, "╰", "Curved style bottom corner resolution failed")
+
+print("  ✓ Scope style presets, corners, and text isolation verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 

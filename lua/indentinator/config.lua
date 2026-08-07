@@ -28,12 +28,65 @@
 
 local M = {}
 
+M.STYLE_PRESETS = {
+  thick = {
+    char = "│",
+    current_char = "┃",
+    corner_top = "┏",
+    corner_bottom = "┗",
+    underline_char = "━",
+  },
+  heavy = {
+    char = "┃",
+    current_char = "█",
+    corner_top = "┏",
+    corner_bottom = "┗",
+    underline_char = "━",
+  },
+  thin = {
+    char = "│",
+    current_char = "│",
+    corner_top = "┌",
+    corner_bottom = "└",
+    underline_char = "─",
+  },
+  double = {
+    char = "│",
+    current_char = "║",
+    corner_top = "╔",
+    corner_bottom = "╚",
+    underline_char = "═",
+  },
+  curved = {
+    char = "│",
+    current_char = "┃",
+    corner_top = "╭",
+    corner_bottom = "╰",
+    underline_char = "─",
+  },
+  dashed = {
+    char = "┆",
+    current_char = "┃",
+    corner_top = "┏",
+    corner_bottom = "┗",
+    underline_char = "━",
+  },
+  dotted = {
+    char = "┊",
+    current_char = "┃",
+    corner_top = "┏",
+    corner_bottom = "┗",
+    underline_char = "━",
+  },
+}
+
 ---@type IndentinatorConfig
 M.defaults = {
   enabled = true,
   smart = false,
   char = "│",
-  current_char = nil,                -- Active guide character (defaults to char if nil)
+  current_char = nil,                -- Active guide character (defaults to style preset if nil)
+  style = "thick",                   -- Preset style: "thick", "thin", "double", "curved", "heavy", "dashed", "dotted"
   char_hl = "IndentinatorGuide",
   gap_hl = "IndentinatorGap",
   draw_gap_hl = false,
@@ -47,7 +100,10 @@ M.defaults = {
     range = "block",        -- "block" (current block only) or "global" (entire column)
     underline = false,      -- underline the top line of the active scope block
     underline_end = false,  -- underline the bottom line of the active scope block
-    underline_style = "underdouble", -- underline style: "underdouble", "underline", "undercurl", "underdashed", "underdotted"
+    corner = true,          -- draw corner characters (┏ and ┗) at scope top/bottom boundaries
+    corner_top = nil,       -- custom top corner char (nil defaults to style preset, e.g. "┏")
+    corner_bottom = nil,    -- custom bottom corner char (nil defaults to style preset, e.g. "┗")
+    underline_char = nil,   -- horizontal character for scope top/bottom lines (nil defaults to style preset, e.g. "━")
     text_highlight = true,  -- colour the text on the scope-start line
     treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
   },
@@ -67,7 +123,7 @@ M.values = vim.deepcopy(M.defaults)
 ---@param ft string|nil Optional pre-fetched filetype string
 ---@return IndentinatorScopeConfig The resolved scope configuration
 function M.resolve_scope(buf, ft)
-  local base = M.values.scope or {}
+  local base = vim.deepcopy(M.values.scope or {})
   if not ft then
     local ok_ft, res = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
     ft = (ok_ft and res) or ""
@@ -75,9 +131,16 @@ function M.resolve_scope(buf, ft)
   if ft ~= "" and M.values.filetypes and M.values.filetypes[ft] then
     local ft_scope = M.values.filetypes[ft].scope
     if type(ft_scope) == "table" then
-      return vim.tbl_extend("force", base, ft_scope)
+      base = vim.tbl_extend("force", base, ft_scope)
     end
   end
+
+  local style_name = M.resolve_config(buf, "style", ft) or "thick"
+  local preset = M.STYLE_PRESETS[style_name] or M.STYLE_PRESETS.thick
+  if not base.corner_top then base.corner_top = preset.corner_top end
+  if not base.corner_bottom then base.corner_bottom = preset.corner_bottom end
+  if not base.underline_char then base.underline_char = preset.underline_char end
+
   return base
 end
 
@@ -91,13 +154,28 @@ function M.resolve_config(buf, opt, ft)
     local ok_ft, res = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
     ft = (ok_ft and res) or ""
   end
+  local val = nil
   if ft ~= "" and M.values.filetypes and M.values.filetypes[ft] then
     local ft_cfg = M.values.filetypes[ft]
     if ft_cfg[opt] ~= nil then
-      return ft_cfg[opt]
+      val = ft_cfg[opt]
     end
   end
-  return M.values[opt]
+  if val == nil then
+    val = M.values[opt]
+  end
+
+  if val == nil then
+    local style_name = M.values.style or "thick"
+    local preset = M.STYLE_PRESETS[style_name] or M.STYLE_PRESETS.thick
+    if opt == "current_char" then
+      val = preset.current_char
+    elseif opt == "char" then
+      val = preset.char
+    end
+  end
+
+  return val
 end
 
 --- Checks if indentation guides are enabled for the specified buffer.

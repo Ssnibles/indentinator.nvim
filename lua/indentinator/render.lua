@@ -16,8 +16,17 @@ M.NS = vim.api.nvim_create_namespace("indentinator")
 ---@param show_first boolean The show_first_indent_level option value
 ---@param char string The guide character
 ---@param current_char string|nil The active scope guide character
+---@param is_scope_start boolean Whether this line is the scope top boundary
+---@param is_scope_end boolean Whether this line is the scope bottom boundary
+---@param underline_enabled boolean Whether scope.underline is enabled
+---@param underline_end_enabled boolean Whether scope.underline_end is enabled
+---@param use_corner boolean Whether to draw corners
+---@param corner_top string|nil Top corner character (defaults to ┏)
+---@param corner_bottom string|nil Bottom corner character (defaults to ┗)
+---@param underline_char string|nil Horizontal character for scope top/bottom (defaults to ━)
 ---@param char_hl string The standard guide highlight group
 ---@param current_hl string The current guide highlight group
+---@param underline_hl string The scope underline highlight group
 ---@param gap_hl string The gap highlight group
 ---@param draw_gap_hl boolean Whether gap highlight is enabled
 ---@return table[] Array of chunks in format { { text, hl }, ... }
@@ -29,44 +38,66 @@ function M.build_virt_text(
   show_first,
   char,
   current_char,
+  is_scope_start,
+  is_scope_end,
+  underline_enabled,
+  underline_end_enabled,
+  use_corner,
+  corner_top,
+  corner_bottom,
+  underline_char,
   char_hl,
   current_hl,
+  underline_hl,
   gap_hl,
   draw_gap_hl
 )
   local chunks = {}
+  local u_char = (underline_char and underline_char ~= "") and underline_char or "━"
+  local c_top = (corner_top and corner_top ~= "") and corner_top or "┏"
+  local c_bot = (corner_bottom and corner_bottom ~= "") and corner_bottom or "┗"
+
+  local step = (width and width > 0) and width or 2
 
   local col = 0
   while col < display_col do
-    local is_guide = true
+    local is_guide_pos = (col % step == 0) or (active_col and col == active_col)
     if col == 0 and not show_first then
-      is_guide = false
+      is_guide_pos = false
     end
 
     local is_current = (active_col and col == active_col)
     if show_current == "only" and not is_current then
-      is_guide = false
+      is_guide_pos = false
     end
 
-    if is_guide then
+    if is_guide_pos then
       local hl = is_current and current_hl or char_hl
-      local guide_c = is_current and (current_char or char) or char
-      table.insert(chunks, { guide_c, hl })
-      local rem = display_col - col - 1
-      if rem > 0 then
-        local gap_size = math.min(width - 1, rem)
-        local g_hl = draw_gap_hl and gap_hl or nil
-        table.insert(chunks, { string.rep(" ", gap_size), g_hl })
-        col = col + 1 + gap_size
-      else
-        col = col + 1
+      local guide_c = char
+      if is_current then
+        if is_scope_start and (underline_enabled or use_corner) then
+          guide_c = use_corner and c_top or u_char
+          hl = underline_hl or current_hl
+        elseif is_scope_end and (underline_end_enabled or use_corner) then
+          guide_c = use_corner and c_bot or u_char
+          hl = underline_hl or current_hl
+        else
+          guide_c = current_char or char
+        end
       end
+      table.insert(chunks, { guide_c, hl })
     else
-      local gap_size = math.min(width, display_col - col)
+      local fill_char = " "
       local g_hl = draw_gap_hl and gap_hl or nil
-      table.insert(chunks, { string.rep(" ", gap_size), g_hl })
-      col = col + gap_size
+      if active_col and (col > active_col) and (is_scope_start or is_scope_end) then
+        if (is_scope_start and (underline_enabled or use_corner)) or (is_scope_end and (underline_end_enabled or use_corner)) then
+          fill_char = u_char
+          g_hl = underline_hl or current_hl
+        end
+      end
+      table.insert(chunks, { fill_char, g_hl })
     end
+    col = col + 1
   end
   return chunks
 end
@@ -245,6 +276,11 @@ function M.render(buf, win)
   local text_highlight_enabled = scope_cfg.text_highlight ~= false
   local text_hl = config.resolve_config(buf, "scope_text_hl", ft)
 
+  local use_corner = scope_cfg.corner ~= false
+  local corner_top = scope_cfg.corner_top
+  local corner_bottom = scope_cfg.corner_bottom
+  local underline_char = scope_cfg.underline_char
+
   local fold_enabled = false
   local ok_fe, fe = pcall(function() return vim.wo[win].foldenable end)
   if ok_fe and fe == true then
@@ -346,18 +382,18 @@ function M.render(buf, win)
         end
       end
 
-      if disp_col and disp_col > 0 and not occupied[abs_line] then
-        local line_active_col = nil
-        if active_col then
-          if scope_start and scope_end then
-            if abs_line >= scope_start and abs_line <= scope_end then
-              line_active_col = active_col
-            end
-          else
+      local line_active_col = nil
+      if active_col then
+        if scope_start and scope_end then
+          if abs_line >= scope_start and abs_line <= scope_end then
             line_active_col = active_col
           end
+        else
+          line_active_col = active_col
         end
+      end
 
+      if disp_col and disp_col > 0 and not occupied[abs_line] then
         local step_width = line_widths[k] or width
         local chunks = M.build_virt_text(
           disp_col,
@@ -367,8 +403,17 @@ function M.render(buf, win)
           show_first,
           char,
           current_char,
+          is_this_scope_start,
+          is_this_scope_end,
+          underline_enabled,
+          underline_end_enabled,
+          use_corner,
+          corner_top,
+          corner_bottom,
+          underline_char,
           char_hl,
           current_hl,
+          underline_hl,
           gap_hl,
           draw_gap_hl
         )

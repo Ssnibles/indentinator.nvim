@@ -90,8 +90,9 @@ Default settings can be overridden during the `setup` call:
 require("indentinator").setup({
   enabled = true,                    -- Enable or disable guides globally
   smart = false,                     -- Continue guides through blank lines (true to break them)
-  char = "│",                        -- Guide character (single-width)
-  current_char = nil,                -- Active scope guide character (nil defaults to char, e.g. "┃")
+  style = "thick",                   -- Preset style: "thick", "heavy", "thin", "double", "curved", "dashed", "dotted"
+  char = "│",                        -- Standard guide character (nil defaults to style preset)
+  current_char = nil,                -- Active scope guide character (nil defaults to style preset, e.g. "┃")
   char_hl = "IndentinatorGuide",     -- Highlight group for standard guides
   gap_hl = "IndentinatorGap",        -- Highlight group for gaps (when draw_gap_hl is true)
   draw_gap_hl = false,               -- Whether to highlight the span between guides
@@ -99,13 +100,16 @@ require("indentinator").setup({
   indent_width = nil,                -- Column step size (nil defaults to shiftwidth/tabstop)
   priority = 100,                    -- Extmark priority level
 
-  -- Active scope highlighting
+  -- Active scope highlighting & border customization
   scope = {
     enabled = false,        -- highlight the guide at the cursor's active scope
     range = "block",        -- "block" (current block only) or "global" (entire column)
     underline = false,      -- underline the top line of the active scope block
     underline_end = false,  -- underline the bottom line of the active scope block
-    underline_style = "underdouble", -- "underdouble", "underline", "undercurl", "underdashed", "underdotted"
+    corner = true,          -- draw top/bottom corners at active scope boundaries
+    corner_top = nil,       -- custom top corner char (nil defaults to style preset, e.g. "┏" or "╭")
+    corner_bottom = nil,    -- custom bottom corner char (nil defaults to style preset, e.g. "┗" or "╰")
+    underline_char = nil,   -- custom horizontal connector character (nil defaults to style preset, e.g. "━" or "─")
     text_highlight = true,  -- colour the text on the scope-start line
     treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
   },
