@@ -8,11 +8,20 @@ M.IGNORE_AST_TYPES = {
   string_literal = true,
   raw_string_literal = true,
   template_string = true,
+  string_fragment = true,
+  char_literal = true,
+  character_literal = true,
+  interpreted_string_literal = true,
+  multiline_string = true,
+  heredoc_body = true,
+  heredoc_start = true,
   comment = true,
   line_comment = true,
   block_comment = true,
   doc_comment = true,
+  comment_content = true,
   regex = true,
+  regex_pattern = true,
 }
 
 M.ROOT_AST_TYPES = {
@@ -24,6 +33,9 @@ M.ROOT_AST_TYPES = {
   script = true,
   document = true,
   compilation_unit = true,
+  stylesheet = true,
+  file = true,
+  root = true,
 }
 
 M.BODY_CONTAINER_TYPES = {
@@ -34,16 +46,50 @@ M.BODY_CONTAINER_TYPES = {
   class_body = true,
   interface_body = true,
   enum_body = true,
+  enum_body_declarations = true,
   body_statement = true,
   do_block = true,
   do_group = true,
   switch_block = true,
+  switch_body = true,
+  switch_section = true,
   block_statement = true,
   communication_case = true,
+  expression_case = true,
   table_constructor = true,
   dictionary = true,
   object = true,
   array = true,
+  list = true,
+  tuple = true,
+  set = true,
+  declaration_list = true,
+  field_declaration_list = true,
+  enumerator_list = true,
+  initializer_list = true,
+  array_initializer = true,
+  composite_literal = true,
+  literal_value = true,
+  match_block = true,
+  match_arm = true,
+  case_clause = true,
+  case_item = true,
+  elif_clause = true,
+  else_clause = true,
+  except_clause = true,
+  finally_clause = true,
+  then_clause = true,
+  subshell = true,
+  rule_set = true,
+  media_statement = true,
+  keyframes_statement = true,
+  element = true,
+  script_element = true,
+  style_element = true,
+  template_element = true,
+  block_mapping = true,
+  block_sequence = true,
+  container_decl = true,
 }
 
 --- Determines the start and end rows of the active block scope.
@@ -179,13 +225,15 @@ function M.get_treesitter_scope_range(buf, win, _width, tabstop)
   local ok_p, parser = pcall(vim.treesitter.get_parser, buf)
   if not ok_p or not parser then return nil, nil, nil end
 
+  pcall(function() parser:parse() end)
+
   local cursor = vim.api.nvim_win_get_cursor(win)
   local cursor_row = cursor[1] - 1
   local cursor_col = cursor[2]
 
   local node = nil
   if vim.treesitter.get_node then
-    local ok_n, n = pcall(vim.treesitter.get_node, { buf = buf, pos = { cursor_row, cursor_col } })
+    local ok_n, n = pcall(vim.treesitter.get_node, { bufnr = buf, buf = buf, pos = { cursor_row, cursor_col } })
     if ok_n then node = n end
   end
 
@@ -260,16 +308,22 @@ function M.get_treesitter_delimiters(scope_node, target_row, is_start)
 
   local open_types = {
     ["{"] = true, ["("] = true, ["["] = true, [":"] = true,
+    ["<"] = true, ["<?php"] = true,
     ["do"] = true, ["then"] = true, ["begin"] = true, ["function"] = true,
-    ["fn"] = true, ["def"] = true, ["class"] = true, ["struct"] = true,
-    ["if"] = true, ["elseif"] = true, ["else"] = true, ["for"] = true,
-    ["while"] = true, ["repeat"] = true, ["until"] = true, ["switch"] = true,
-    ["case"] = true, ["try"] = true, ["catch"] = true, ["except"] = true,
-    ["finally"] = true, ["select"] = true,
+    ["func"] = true, ["fn"] = true, ["def"] = true, ["class"] = true,
+    ["struct"] = true, ["enum"] = true, ["union"] = true, ["interface"] = true,
+    ["trait"] = true, ["impl"] = true, ["module"] = true, ["namespace"] = true,
+    ["package"] = true, ["type"] = true, ["import"] = true,
+    ["if"] = true, ["elseif"] = true, ["elif"] = true, ["else"] = true,
+    ["for"] = true, ["while"] = true, ["repeat"] = true, ["until"] = true,
+    ["loop"] = true, ["match"] = true, ["switch"] = true, ["case"] = true,
+    ["select"] = true, ["try"] = true, ["catch"] = true, ["except"] = true,
+    ["finally"] = true, ["rescue"] = true, ["ensure"] = true, ["unless"] = true,
+    ["with"] = true, ["where"] = true, ["defer"] = true, ["go"] = true,
   }
 
   local close_types = {
-    ["}"] = true, [")"] = true, ["]"] = true,
+    ["}"] = true, [")"] = true, ["]"] = true, [">"] = true, ["?>"] = true,
     ["end"] = true, ["done"] = true, ["fi"] = true, ["esac"] = true,
   }
 
@@ -314,9 +368,11 @@ function M.find_delimiters(line_text, is_start)
 
   if is_start then
     local open_keywords = {
-      "for", "while", "if", "elseif", "else", "repeat", "until", "do", "then",
-      "begin", "function", "fn", "def", "class", "struct", "switch", "case",
-      "select", "try", "catch", "except", "finally"
+      "for", "while", "if", "elseif", "elif", "else", "repeat", "until", "do", "then",
+      "begin", "function", "func", "fn", "def", "class", "struct", "enum", "union",
+      "interface", "trait", "impl", "module", "namespace", "package", "type",
+      "switch", "case", "select", "try", "catch", "except", "finally", "rescue",
+      "ensure", "unless", "with", "where", "loop", "match", "defer", "go"
     }
     for _, kw in ipairs(open_keywords) do
       local s, e = clean_text:find("%f[%a]" .. kw .. "%f[%A]")
@@ -327,12 +383,12 @@ function M.find_delimiters(line_text, is_start)
 
     for col = 1, #clean_text do
       local char = clean_text:sub(col, col)
-      if char == "{" or char == "[" then
+      if char == "{" or char == "[" or char == "(" then
         table.insert(matches, { col - 1, col })
       end
     end
   else
-    local close_keywords = { "end", "done", "fi", "esac" }
+    local close_keywords = { "end", "done", "fi", "esac", "rescue", "ensure" }
     for _, kw in ipairs(close_keywords) do
       local s, e = clean_text:find("%f[%a]" .. kw .. "%f[%A]")
       if s and e then
@@ -342,7 +398,7 @@ function M.find_delimiters(line_text, is_start)
 
     for col = 1, #clean_text do
       local char = clean_text:sub(col, col)
-      if char == "}" or char == "]" then
+      if char == "}" or char == "]" or char == ")" then
         table.insert(matches, { col - 1, col })
       end
     end

@@ -62,29 +62,35 @@ function M.setup(opts)
 		end,
 	})
 
-	vim.api.nvim_create_autocmd({ "WinScrolled", "WinResized" }, {
+	vim.api.nvim_create_autocmd({ "WinScrolled", "WinResized", "VimResized" }, {
 		group = AUGROUP,
 		callback = function(ev)
-			local event_wins = vim.v.event and vim.v.event.all
-			if event_wins and next(event_wins) then
-				for win_id_str, _ in pairs(event_wins) do
-					local win = tonumber(win_id_str)
-					if win then
-						local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
-						if ok_b then
-							render.render(wb, win)
+			vim.schedule(function()
+				if ev.event == "VimResized" then
+					M.force_update()
+					return
+				end
+				local event_wins = vim.v.event and vim.v.event.all
+				if event_wins and next(event_wins) then
+					for win_id_str, _ in pairs(event_wins) do
+						local win = tonumber(win_id_str)
+						if win and vim.api.nvim_win_is_valid(win) then
+							local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
+							if ok_b then
+								render.render(wb, win)
+							end
 						end
 					end
+					return
 				end
-				return
-			end
-			local win = tonumber(ev.match)
-			if win then
-				local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
-				if ok_b then
-					render.render(wb, win)
+				local win = tonumber(ev.match) or vim.api.nvim_get_current_win()
+				if win and vim.api.nvim_win_is_valid(win) then
+					local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
+					if ok_b then
+						render.render(wb, win)
+					end
 				end
-			end
+			end)
 		end,
 	})
 

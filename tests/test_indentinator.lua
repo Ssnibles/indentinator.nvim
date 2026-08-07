@@ -63,9 +63,10 @@ ind.enable(buf)
 -- Retrieve active scope info by testing TS scope function internally
 local parser = vim.treesitter.get_parser(buf, "lua")
 assert_eq(parser ~= nil, true, "Failed to get Lua Treesitter parser")
+parser:parse()
 
 -- Verify cursor at line 3 resolves scope starting at line 2 (`if true then`)
-local ts_node = vim.treesitter.get_node({ buf = buf, pos = { 2, 5 } })
+local ts_node = vim.treesitter.get_node({ bufnr = buf, buf = buf, pos = { 2, 5 } })
 assert_eq(ts_node ~= nil, true, "Treesitter node resolution failed")
 
 print("  ✓ Treesitter parser and node resolution operating correctly.")
@@ -265,6 +266,66 @@ for _, em in ipairs(delim_marks) do
 end
 assert_eq(delim_count >= 2, true, "scope.delimiters = true should produce extmarks for opener/closer keywords")
 print("  ✓ Scope delimiter highlighting verified successfully.")
+
+-- 12. Test Window Resize and Multi-Window Rendering (No Line Cutoffs)
+print("[Test 12] Testing Window Resize & Multi-Window Rendering...")
+local res_buf = vim.api.nvim_create_buf(true, false)
+vim.api.nvim_buf_set_lines(res_buf, 0, -1, false, {
+  "function multi_win()",
+  "  local x = 10",
+  "  local y = 20",
+  "  return x + y",
+  "end",
+})
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = res_buf })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = res_buf })
+vim.api.nvim_win_set_buf(win, res_buf)
+ind.enable(res_buf)
+
+vim.api.nvim_win_set_height(win, 20)
+local win2 = vim.api.nvim_open_win(res_buf, false, {
+  relative = "editor",
+  width = 40,
+  height = 20,
+  row = 0,
+  col = 0,
+})
+vim.cmd("redraw")
+render.render_all(res_buf)
+
+local mark_w0 = vim.api.nvim_buf_get_extmarks(res_buf, render.NS, { 0, 0 }, { 0, 999 }, { details = true })
+local mark_w1 = vim.api.nvim_buf_get_extmarks(res_buf, render.NS, { 1, 0 }, { 1, 999 }, { details = true })
+assert_eq(#mark_w0 > 0, true, "Line 1 should render scope extmark in multi-window layout")
+assert_eq(#mark_w1 > 0, true, "Line 2 should render guide extmark in multi-window layout")
+
+-- Trigger VimResized event autocommand
+vim.api.nvim_exec_autocmds("VimResized", {})
+vim.wait(50)
+local res_marks = vim.api.nvim_buf_get_extmarks(res_buf, render.NS, { 0, 0 }, { -1, -1 }, {})
+assert_eq(#res_marks > 0, true, "Extmarks re-rendered successfully after VimResized event")
+
+vim.api.nvim_win_close(win2, true)
+print("  ✓ Window resize and multi-window rendering verified successfully.")
+
+-- 13. Test Multi-Language AST Node & Delimiter Definitions
+print("[Test 13] Testing Multi-Language AST Node & Delimiter Definitions...")
+local scope_mod = require("indentinator.scope")
+assert_eq(scope_mod.BODY_CONTAINER_TYPES["match_block"], true, "Rust/Python match_block in BODY_CONTAINER_TYPES")
+assert_eq(scope_mod.BODY_CONTAINER_TYPES["switch_body"], true, "JS/C switch_body in BODY_CONTAINER_TYPES")
+assert_eq(scope_mod.BODY_CONTAINER_TYPES["do_block"], true, "Elixir/Ruby do_block in BODY_CONTAINER_TYPES")
+assert_eq(scope_mod.BODY_CONTAINER_TYPES["element"], true, "HTML/Vue element in BODY_CONTAINER_TYPES")
+assert_eq(scope_mod.BODY_CONTAINER_TYPES["rule_set"], true, "CSS/SCSS rule_set in BODY_CONTAINER_TYPES")
+
+local py_delims = scope_mod.find_delimiters("def calculate(x, y):", true)
+assert_eq(#py_delims >= 1, true, "Python 'def' detected as opening delimiter")
+
+local rs_delims = scope_mod.find_delimiters("impl StructName {", true)
+assert_eq(#rs_delims >= 2, true, "Rust 'impl' and '{' detected as opening delimiters")
+
+local go_delims = scope_mod.find_delimiters("func main() {", true)
+assert_eq(#go_delims >= 2, true, "Go 'func' and '{' detected as opening delimiters")
+
+print("  ✓ Multi-language AST nodes and delimiter maps verified successfully.")
 
 print("=== All Indentinator Tests Passed! ===")
 

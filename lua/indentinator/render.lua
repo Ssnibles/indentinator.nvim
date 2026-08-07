@@ -103,7 +103,9 @@ function M.clear_window(buf, win)
   local r = ranges[win]
   if r then
     local start_line = math.max(0, r[1] - 1)
-    pcall(vim.api.nvim_buf_clear_namespace, buf, M.NS, start_line, r[2] + 1)
+    local line_count = vim.api.nvim_buf_line_count(buf)
+    local end_line = math.min(line_count, r[2] + 1)
+    pcall(vim.api.nvim_buf_clear_namespace, buf, M.NS, start_line, end_line)
     ranges[win] = nil
   end
 end
@@ -120,22 +122,30 @@ end
 --- Renders indentation guides for the visible lines of a buffer in a specific window.
 ---@param buf number The buffer handle
 ---@param win number The window handle
-function M.render(buf, win)
-  if not buf or not win or not vim.api.nvim_buf_is_loaded(buf) then return end
+---@param skip_clear boolean|nil Whether to skip clearing prior extmarks (used by render_all)
+function M.render(buf, win, skip_clear)
+  if not buf or not win or not vim.api.nvim_win_is_valid(win) or not vim.api.nvim_buf_is_loaded(buf) then return end
   if not config.is_enabled(buf, state) then
     M.clear_window(buf, win)
     return
   end
 
-  local ok_r, r0 = pcall(vim.fn.line, "w0", win)
-  if not ok_r then return end
-  local ok_s, r1 = pcall(vim.fn.line, "w$", win)
-  if not ok_s then return end
+  if not skip_clear then
+    M.clear_window(buf, win)
+  end
+
+  local ok_view, view = pcall(function()
+    return vim.api.nvim_win_call(win, function()
+      return { vim.fn.line("w0"), vim.fn.line("w$") }
+    end)
+  end)
+  if not ok_view or type(view) ~= "table" then return end
+  local r0, r1 = view[1], view[2]
   if type(r0) ~= "number" or type(r1) ~= "number" or r1 < r0 or r0 <= 0 then return end
 
   local ok_l, lines = pcall(vim.api.nvim_buf_get_lines, buf, r0 - 1, r1, false)
   if not ok_l or #lines == 0 then
-    M.clear_window(buf, win)
+    if not skip_clear then M.clear_window(buf, win) end
     return
   end
 
@@ -230,24 +240,6 @@ function M.render(buf, win)
     end
   end
 
-  local occupied = {}
-  local wins_for_buf = state.windows[buf]
-  if wins_for_buf and next(wins_for_buf) then
-    local has_other = false
-    for other, _ in pairs(wins_for_buf) do
-      if other ~= win then has_other = true; break end
-    end
-    if has_other then
-      for other, r in pairs(wins_for_buf) do
-        if other ~= win then
-          for ln = r[1], r[2] do occupied[ln] = true end
-        end
-      end
-    end
-  end
-
-  M.clear_window(buf, win)
-
   local char = config.resolve_config(buf, "char", ft)
   local current_char = config.resolve_config(buf, "current_char", ft) or char
   local char_hl = config.resolve_config(buf, "char_hl", ft)
@@ -302,7 +294,7 @@ function M.render(buf, win)
       local is_in_scope = (scope_start ~= nil and scope_end ~= nil
         and abs_line >= scope_start and abs_line <= scope_end)
 
-      if is_in_scope and bg_enabled and not occupied[abs_line] then
+      if is_in_scope and bg_enabled then
         if bg_full_block or is_this_scope_start or is_this_scope_end then
           pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
             end_row = line_idx,
@@ -313,7 +305,7 @@ function M.render(buf, win)
         end
       end
 
-      if is_this_scope_start and text_highlight_enabled and not occupied[abs_line] then
+      if is_this_scope_start and text_highlight_enabled then
         local scope_line_text = lines[k]
         local text_len = #scope_line_text
         local lead_len = #(scope_line_text:match("^%s*"))
@@ -329,7 +321,7 @@ function M.render(buf, win)
         end
       end
 
-      if delimiters_enabled and (is_this_scope_start or is_this_scope_end) and not occupied[abs_line] then
+      if delimiters_enabled and (is_this_scope_start or is_this_scope_end) then
         local delims = nil
         if scope_node then
           delims = scope.get_treesitter_delimiters(scope_node, line_idx, is_this_scope_start)
@@ -361,7 +353,7 @@ function M.render(buf, win)
         end
       end
 
-      if disp_col and disp_col > 0 and not occupied[abs_line] then
+      if disp_col and disp_col > 0 then
         local step_width = line_widths[k] or width
         local chunks = M.build_virt_text(
           disp_col,
@@ -415,9 +407,25 @@ end
 --- Triggers rendering on all windows showing the specified buffer.
 ---@param buf number The buffer handle
 function M.render_all(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_buf_is_loaded(buf) then return end
+  local cur_win = pcall(vim.api.nvim_get_current_win) and vim.api.nvim_get_current_win() or nil
+  local wins = {}
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
-    if ok_b and wb == buf then M.render(buf, win) end
+    if ok_b and wb == buf then
+      if win == cur_win then
+        table.insert(wins, win)
+      else
+        table.insert(wins, 1, win)
+      end
+    end
+  end
+  if #wins > 0 then
+    pcall(vim.api.nvim_buf_clear_namespace, buf, M.NS, 0, -1)
+    if state.windows[buf] then state.windows[buf] = {} end
+    for _, win in ipairs(wins) do
+      M.render(buf, win, true)
+    end
   end
 end
 
