@@ -91,6 +91,7 @@ require("indentinator").setup({
   enabled = true,                    -- Enable or disable guides globally
   smart = false,                     -- Continue guides through blank lines (true to break them)
   char = "│",                        -- Guide character (single-width)
+  current_char = nil,                -- Active scope guide character (nil defaults to char, e.g. "┃")
   char_hl = "IndentinatorGuide",     -- Highlight group for standard guides
   gap_hl = "IndentinatorGap",        -- Highlight group for gaps (when draw_gap_hl is true)
   draw_gap_hl = false,               -- Whether to highlight the span between guides

@@ -15,6 +15,7 @@ M.NS = vim.api.nvim_create_namespace("indentinator")
 ---@param show_current boolean|string The show_current_indent option value
 ---@param show_first boolean The show_first_indent_level option value
 ---@param char string The guide character
+---@param current_char string|nil The active scope guide character
 ---@param char_hl string The standard guide highlight group
 ---@param current_hl string The current guide highlight group
 ---@param gap_hl string The gap highlight group
@@ -27,6 +28,7 @@ function M.build_virt_text(
   show_current,
   show_first,
   char,
+  current_char,
   char_hl,
   current_hl,
   gap_hl,
@@ -48,7 +50,8 @@ function M.build_virt_text(
 
     if is_guide then
       local hl = is_current and current_hl or char_hl
-      table.insert(chunks, { char, hl })
+      local guide_c = is_current and (current_char or char) or char
+      table.insert(chunks, { guide_c, hl })
       local rem = display_col - col - 1
       if rem > 0 then
         local gap_size = math.min(width - 1, rem)
@@ -230,6 +233,7 @@ function M.render(buf, win)
   M.clear_window(buf, win)
 
   local char = config.resolve_config(buf, "char", ft)
+  local current_char = config.resolve_config(buf, "current_char", ft) or char
   local char_hl = config.resolve_config(buf, "char_hl", ft)
   local current_hl = config.resolve_config(buf, "current_char_hl", ft)
   local gap_hl = config.resolve_config(buf, "gap_hl", ft)
@@ -275,7 +279,8 @@ function M.render(buf, win)
       if is_this_scope_start and (underline_enabled or text_highlight_enabled) and not occupied[abs_line] then
         local scope_line_text = lines[k]
         local text_len = #scope_line_text
-        local start_byte = 0
+        local lead_len = #(scope_line_text:match("^%s*"))
+        local start_byte = lead_len
         if active_col and active_col > 0 then
           local dcol = 0
           local i = 1
@@ -285,6 +290,7 @@ function M.render(buf, win)
             if dcol <= active_col then start_byte = i end
             i = i + 1
           end
+          start_byte = math.max(start_byte, lead_len)
         end
         if text_len > start_byte then
           if underline_enabled then
@@ -298,7 +304,6 @@ function M.render(buf, win)
             })
           end
           if text_highlight_enabled then
-            local lead_len = #(scope_line_text:match("^%s*"))
             if text_len > lead_len then
               pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, lead_len, {
                 end_row = line_idx,
@@ -316,8 +321,21 @@ function M.render(buf, win)
       if is_this_scope_end and underline_end_enabled and not occupied[abs_line] then
         local scope_end_text = lines[k]
         local text_len = #scope_end_text
-        if text_len > 0 then
-          pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
+        local lead_len = #(scope_end_text:match("^%s*"))
+        local start_byte = lead_len
+        if active_col and active_col > 0 then
+          local dcol = 0
+          local i = 1
+          while i <= text_len and dcol < active_col do
+            local b = scope_end_text:byte(i)
+            dcol = dcol + (b == 9 and (tabstop - (dcol % tabstop)) or 1)
+            if dcol <= active_col then start_byte = i end
+            i = i + 1
+          end
+          start_byte = math.max(start_byte, lead_len)
+        end
+        if text_len > start_byte then
+          pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, start_byte, {
             end_row = line_idx,
             end_col = text_len,
             hl_group = underline_hl,
@@ -348,6 +366,7 @@ function M.render(buf, win)
           show_current,
           show_first,
           char,
+          current_char,
           char_hl,
           current_hl,
           gap_hl,
@@ -435,13 +454,13 @@ end
 function M.set_hl()
   vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE", default = true })
   vim.api.nvim_set_hl(0, "IndentinatorGap", { fg = "#555b6e", bg = "NONE", default = true })
-  vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#a6adc8", bg = "NONE", default = true })
+  vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
   vim.api.nvim_set_hl(
     0,
     "IndentinatorScopeUnderline",
-    { fg = "#a6adc8", bg = "NONE", underline = true, default = true }
+    { fg = "#cdd6f4", bold = true, underline = true, sp = "#cdd6f4", default = true }
   )
-  vim.api.nvim_set_hl(0, "IndentinatorScopeText", { fg = "#a6adc8", bg = "NONE", default = true })
+  vim.api.nvim_set_hl(0, "IndentinatorScopeText", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
 end
 
 return M

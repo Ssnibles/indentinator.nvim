@@ -159,5 +159,29 @@ assert_eq(cur_after_top[1], 2, "jump_to_scope top failed")
 
 print("  ✓ Scope API and navigation functions operating correctly.")
 
+-- 8. Test Scope Underline Boundaries (No Left Bleed)
+print("[Test 8] Testing Scope Underline Boundaries (No Left Bleed)...")
+ind.setup({
+  scope = {
+    enabled = true,
+    underline = true,
+    underline_end = true,
+  },
+})
+ind.force_update()
+local render = require("indentinator.render")
+local line5_extmarks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 4, 0 }, { 4, -1 }, { details = true })
+local found_end_underline = false
+for _, em in ipairs(line5_extmarks) do
+  local col = em[3]
+  local details = em[4]
+  if details and details.hl_group == "IndentinatorScopeUnderline" then
+    found_end_underline = true
+    assert_eq(col > 0, true, "Scope end underline should not bleed to column 0")
+  end
+end
+assert_eq(found_end_underline, true, "Scope end underline extmark should be present")
+print("  ✓ Scope underline boundaries verified with zero left bleed.")
+
 print("=== All Indentinator Tests Passed! ===")
 

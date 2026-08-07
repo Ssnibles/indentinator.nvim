@@ -2,6 +2,7 @@
 ---@field enabled boolean Whether to highlight the active scope guide
 ---@field range string Scope range: "block" (current block) or "global" (full column)
 ---@field underline boolean Whether to underline the top line of the active scope
+---@field underline_end boolean Whether to underline the bottom line of the active scope
 ---@field text_highlight boolean Whether to colour the text on the scope-start line
 ---@field treesitter boolean Whether to use Treesitter for scope calculation (falls back to indentation if unavailable)
 
@@ -9,6 +10,7 @@
 ---@field enabled boolean Whether the plugin is enabled globally or per-buffer
 ---@field smart boolean Whether blank lines inherit the indentation guides of neighbouring lines
 ---@field char string The character used for drawing the indentation guides
+---@field current_char string|nil The character used for the active scope guide
 ---@field char_hl string The highlight group for standard guides
 ---@field gap_hl string The highlight group for gaps
 ---@field draw_gap_hl boolean Whether gaps should be highlighted
@@ -31,6 +33,7 @@ M.defaults = {
   enabled = true,
   smart = false,
   char = "│",
+  current_char = nil,                -- Active guide character (defaults to char if nil)
   char_hl = "IndentinatorGuide",
   gap_hl = "IndentinatorGap",
   draw_gap_hl = false,
