@@ -13,7 +13,10 @@ A lightweight, high-performance indentation guides plugin for Neovim. Written in
 
 - **Viewport-Bounded**: Only computes and paints guides for lines visible in the active viewport.
 - **Smart Guide Continuity**: Empty lines inherit guides from surrounding blocks (`smart = false`) or break them (`smart = true`).
-- **Scope Background & Highlight**: Highlights active block scope background (`background = true`) and scope-start line text.
+- **Scope Background & Highlight**: Highlights active block scope background (`background = true`), scope-start line text, and boundary delimiters.
+- **Scope Delimiter Highlighting**: Highlights scope start and end delimiters (braces, brackets, parentheses, and keywords like `function`, `if`, `end`, `def`).
+- **Treesitter Integration**: Optional AST-based scope resolution (`scope.treesitter = true`) with automatic fallback to indentation-based blocks.
+- **Corner Connectors**: Draw top (`┏` / `╭`) and bottom (`┗` / `╰`) corner characters with horizontal connectors (`━` / `─`) at scope boundaries.
 - **Scope Navigation**: Command `:IndentinatorScopeJump` to jump cursor to top or bottom of the active block.
 - **Statusline Integration**: Helper function `require("indentinator").statusline()` for Lualine/Heirline integration.
 - **Dynamic Overrides**: Customize options per filetype or exclude specific buffer types.
@@ -89,8 +92,8 @@ Default settings can be overridden during the `setup` call:
 require("indentinator").setup({
   enabled = true,                    -- Enable or disable guides globally
   smart = false,                     -- Continue guides through blank lines (true to break them)
-  style = "thick",                   -- Preset style: "thick", "heavy", "thin", "double", "curved", "dashed", "dotted"
-  char = "│",                        -- Standard guide character (nil defaults to style preset)
+  style = "thick",                   -- Preset style: "thick", "thin", "heavy", "double", "curved", "dashed", "dotted"
+  char = nil,                        -- Standard guide character (nil defaults to style preset, e.g. "│")
   current_char = nil,                -- Active scope guide character (nil defaults to style preset, e.g. "┃")
   char_hl = "IndentinatorGuide",     -- Highlight group for standard guides
   gap_hl = "IndentinatorGap",        -- Highlight group for gaps (when draw_gap_hl is true)
@@ -109,6 +112,7 @@ require("indentinator").setup({
     corner_bottom = nil,    -- custom bottom corner char (nil defaults to style preset, e.g. "┗" or "╰")
     underline_char = nil,   -- custom horizontal connector character (nil defaults to style preset, e.g. "━" or "─")
     text_highlight = true,  -- colour the text on the scope-start line
+    delimiters = false,     -- highlight scope boundary delimiters (braces, brackets, keywords like function/if/def/end)
     treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
   },
 
@@ -132,6 +136,20 @@ require("indentinator").setup({
   }
 })
 ```
+
+### Style Presets
+
+The `style` option configures default characters for standard guides, active scope guides, corners, and horizontal connector lines:
+
+| Preset Name | Guide Char (`char`) | Active Char (`current_char`) | Top Corner (`corner_top`) | Bottom Corner (`corner_bottom`) | Connector (`underline_char`) |
+|-------------|---------------------|-----------------------------|---------------------------|--------------------------------|------------------------------|
+| `"thick"`   | `│` | `┃` | `┏` | `┗` | `━` |
+| `"thin"`    | `│` | `│` | `┌` | `└` | `─` |
+| `"curved"`  | `│` | `┃` | `╭` | `╰` | `─` |
+| `"heavy"`   | `┃` | `┃` | `┏` | `┗` | `━` |
+| `"double"`  | `║` | `║` | `╔` | `╚` | `═` |
+| `"dashed"`  | `┆` | `┃` | `┏` | `┗` | `━` |
+| `"dotted"`  | `┊` | `┃` | `┏` | `┗` | `━` |
 
 ---
 
@@ -160,15 +178,17 @@ vim.api.nvim_set_hl(0, "IndentinatorScopeDelimiter", { fg = "#cdd6f4", bold = tr
 > [!IMPORTANT]
 > Always set `bg = "NONE"` on guide character highlight groups (`IndentinatorGuide`, `IndentinatorCurrentGuide`) to prevent guides from obscuring background styling.
 
-### Scope Background Example
+### Scope Background & Delimiters Example
 
-With `scope.enabled = true` and `scope.background = true`, all lines in the current block scope receive a subtle background highlight:
+With `scope.enabled = true`, `scope.background = true`, and `scope.delimiters = true`:
 
 ```lua
 require("indentinator").setup({
   scope = {
     enabled = true,
     background = true, -- Highlights active scope block lines
+    delimiters = true, -- Highlights scope boundary keywords & brackets
+    treesitter = true, -- Enables AST-based active scope detection
   },
 })
 ```

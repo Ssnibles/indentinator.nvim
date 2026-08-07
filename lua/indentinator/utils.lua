@@ -14,9 +14,10 @@ end
 
 --- Computes the indentation width for a given buffer.
 ---@param buf number The buffer handle
+---@param ft string|nil Optional pre-fetched filetype string
 ---@return number The resolved indentation step width
-function M.indent_width(buf)
-  local custom_width = config.resolve_config(buf, "indent_width")
+function M.indent_width(buf, ft)
+  local custom_width = config.resolve_config(buf, "indent_width", ft)
   if custom_width then return custom_width end
   return M.get_buf_opt(buf, "shiftwidth") or M.get_buf_opt(buf, "tabstop") or 8
 end

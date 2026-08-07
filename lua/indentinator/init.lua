@@ -33,15 +33,18 @@ function M.setup(opts)
 	end
 
 	if M._setup_done then
+		render.set_hl()
+		M.force_update()
 		return
 	end
 	M._setup_done = true
 
-	local char_width = vim.fn.strdisplaywidth(M.config.char)
+	local resolved_char = config.resolve_config(0, "char")
+	local char_width = vim.fn.strdisplaywidth(resolved_char)
 	if char_width ~= 1 then
 		vim.notify(
 			("indentinator: char %q has display width %d (expected 1), falling back to '│'"):format(
-				M.config.char,
+				resolved_char,
 				char_width
 			),
 			vim.log.levels.WARN
@@ -140,12 +143,8 @@ function M.setup(opts)
 			state.last_cursor_col = state.last_cursor_col or {}
 			state.last_leftcol = state.last_leftcol or {}
 
-			local ok_lc, leftcol = pcall(function()
-				return vim.api.nvim_win_call(win, function()
-					return vim.fn.winsaveview().leftcol
-				end)
-			end)
-			leftcol = (ok_lc and type(leftcol) == "number") and leftcol or 0
+			local ok_view, view = pcall(vim.fn.winsaveview)
+			local leftcol = (ok_view and type(view) == "table" and type(view.leftcol) == "number") and view.leftcol or 0
 
 			local row_changed = state.last_cursor_row[win] ~= row
 			local col_changed = state.last_cursor_col[win] ~= col

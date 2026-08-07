@@ -47,9 +47,11 @@ function M.check()
   end
 
   local ind = require("indentinator")
+  local config_mod = require("indentinator.config")
   local c = ind.config
+  local char_val = config_mod.resolve_config(0, "char")
   health.info(("enabled=%s smart=%s char=%q indent_width=%s"):format(
-    tostring(c.enabled), tostring(c.smart), c.char, tostring(c.indent_width)
+    tostring(c.enabled), tostring(c.smart), char_val, tostring(c.indent_width)
   ))
   health.info(("show_first_indent_level=%s draw_gap_hl=%s"):format(
     tostring(c.show_first_indent_level), tostring(c.draw_gap_hl)

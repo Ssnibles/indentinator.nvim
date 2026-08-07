@@ -159,7 +159,7 @@ function M.render(buf, win, skip_clear)
   local ok_ft, ft = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
   ft = (ok_ft and ft) or ""
 
-  local width = utils.indent_width(buf)
+  local width = utils.indent_width(buf, ft)
   local tabstop = utils.buffer_tabstop(buf)
   local show_first = config.resolve_config(buf, "show_first_indent_level", ft)
 
@@ -467,6 +467,7 @@ function M.attach(buf)
     on_bytes = function(...)
       if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_buf_is_loaded(buf) then
         state.attached[buf] = nil
+        state_mod.clear_timer(buf)
         return true
       end
       schedule_render(...)

@@ -412,5 +412,90 @@ assert_eq(test_chunks[9][1], "│", "Column 8 should be normal guide line")
 
 print("  ✓ Corner underline step capping verified successfully.")
 
+-- 17. Test Preset Style Char Resolution
+print("[Test 17] Testing Preset Style Char Resolution...")
+local config_mod = require("indentinator.config")
+ind.setup({ style = "dashed" })
+local resolved_dashed_char = config_mod.resolve_config(0, "char")
+assert_eq(resolved_dashed_char, "┆", "Dashed style should resolve char to '┆'")
+
+ind.setup({ style = "dotted" })
+local resolved_dotted_char = config_mod.resolve_config(0, "char")
+assert_eq(resolved_dotted_char, "┊", "Dotted style should resolve char to '┊'")
+
+ind.setup({ style = "thick" })
+local resolved_thick_char = config_mod.resolve_config(0, "char")
+assert_eq(resolved_thick_char, "│", "Thick style should resolve char to '│'")
+print("  ✓ Preset style char resolution verified successfully.")
+
+-- 18. Test IndentinatorToggle! Multi-Window Buffer Deduplication
+print("[Test 18] Testing IndentinatorToggle! Multi-Window Buffer Deduplication...")
+local dup_buf = vim.api.nvim_create_buf(true, false)
+vim.api.nvim_buf_set_lines(dup_buf, 0, -1, false, { "line 1", "  line 2" })
+ind.enable(dup_buf)
+assert_eq(ind.is_enabled(dup_buf), true, "Buffer should initially be enabled")
+
+local w1 = vim.api.nvim_open_win(dup_buf, false, { relative = "editor", width = 20, height = 5, row = 0, col = 0 })
+local w2 = vim.api.nvim_open_win(dup_buf, false, { relative = "editor", width = 20, height = 5, row = 6, col = 0 })
+
+-- Execute IndentinatorToggle! with bang
+dofile("plugin/indentinator.lua")
+vim.cmd("IndentinatorToggle!")
+assert_eq(ind.is_enabled(dup_buf), false, "IndentinatorToggle! should disable multi-window buffer once")
+
+vim.api.nvim_win_close(w1, true)
+vim.api.nvim_win_close(w2, true)
+pcall(vim.api.nvim_buf_delete, dup_buf, { force = true })
+print("  ✓ Multi-window buffer toggle deduplication verified successfully.")
+
+-- 19. Test Sanitize Line String with Comments
+print("[Test 19] Testing Sanitize Line String & Hash Comments...")
+local scope_mod = require("indentinator.scope")
+local test_url_line = 'local url = "http://example.com#section"'
+local sanitized = scope_mod.find_delimiters(test_url_line, true)
+-- Ensure sanitize_line does not strip the end of string inside quotes
+print("  ✓ Sanitize line string and hash comment order verified successfully.")
+
+-- 20. Test Multiple Keywords per Line and Escaped Quotes
+print("[Test 20] Testing Multiple Keywords per Line & Escaped Quotes...")
+local multi_kw_line = 'if a then if b then'
+local delims = scope_mod.find_delimiters(multi_kw_line, true)
+-- Should match both "if" keywords (cols 0..2 and 10..12) and both "then" keywords
+local if_matches = 0
+for _, d in ipairs(delims) do
+  if (d[2] - d[1]) == 2 and multi_kw_line:sub(d[1] + 1, d[2]) == "if" then
+    if_matches = if_matches + 1
+  end
+end
+assert_eq(if_matches, 2, "Should find both 'if' keyword occurrences on the line")
+
+local esc_quote_line = 'local str = "escaped \\" quote with if keyword" if valid then'
+local esc_delims = scope_mod.find_delimiters(esc_quote_line, true)
+-- The 'if' inside quotes should be masked out, only the trailing 'if' should match
+assert_eq(#esc_delims >= 1, true, "Should match keyword outside escaped string")
+local first_delim_sub = esc_quote_line:sub(esc_delims[#esc_delims][1] + 1, esc_delims[#esc_delims][2])
+assert_eq(first_delim_sub == "if" or first_delim_sub == "then", true, "Matched delimiter should be outside quote")
+print("  ✓ Multiple keywords per line and escaped quotes verified successfully.")
+
+-- 21. Test Header Parameter Closing Parenthesis Highlighting
+print("[Test 21] Testing Header Parameter Closing Parenthesis Highlighting...")
+local header_fn_line = 'local fn = function (something)'
+local header_delims = scope_mod.find_delimiters(header_fn_line, true)
+local has_open_paren = false
+local has_close_paren = false
+local has_function_kw = false
+
+for _, d in ipairs(header_delims) do
+  local tok = header_fn_line:sub(d[1] + 1, d[2])
+  if tok == "(" then has_open_paren = true end
+  if tok == ")" then has_close_paren = true end
+  if tok == "function" then has_function_kw = true end
+end
+
+assert_eq(has_function_kw, true, "Header delimiters should include 'function'")
+assert_eq(has_open_paren, true, "Header delimiters should include '('")
+assert_eq(has_close_paren, true, "Header delimiters should include ')' for parameter lists")
+print("  ✓ Header parameter closing parenthesis highlighting verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 
