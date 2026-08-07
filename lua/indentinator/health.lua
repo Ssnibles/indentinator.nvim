@@ -56,7 +56,11 @@ function M.check()
   ))
   local scope = c.scope or {}
   health.info(("scope.enabled=%s scope.range=%s scope.underline=%s scope.text_highlight=%s scope.treesitter=%s"):format(
-    tostring(scope.enabled), tostring(scope.range), tostring(scope.underline), tostring(scope.text_highlight), tostring(scope.treesitter)
+    tostring(scope.enabled),
+    tostring(scope.range),
+    tostring(scope.underline),
+    tostring(scope.text_highlight),
+    tostring(scope.treesitter)
   ))
   if scope.treesitter then
     if vim.treesitter and vim.treesitter.get_parser then

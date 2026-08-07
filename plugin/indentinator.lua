@@ -38,3 +38,15 @@ end), { desc = "Toggle indentation guides (use ! to toggle in all buffers)", ban
 vim.api.nvim_create_user_command("IndentinatorHealth", cmd(function()
   vim.cmd("checkhealth indentinator")
 end), { desc = "Run indentinator health check" })
+
+vim.api.nvim_create_user_command("IndentinatorScopeJump", cmd(function(opts)
+  local target = opts.args ~= "" and opts.args or "top"
+  ind.jump_to_scope(target)
+end), {
+  desc = "Jump cursor to start ('top') or end ('bottom') of active scope block",
+  nargs = "?",
+  complete = function(arg_lead)
+    local choices = { "top", "bottom" }
+    return vim.tbl_filter(function(c) return c:find(arg_lead, 1, true) == 1 end, choices)
+  end,
+})

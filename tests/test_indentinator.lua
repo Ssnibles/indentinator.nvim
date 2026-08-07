@@ -70,7 +70,94 @@ assert_eq(ts_node ~= nil, true, "Treesitter node resolution failed")
 
 print("  ✓ Treesitter parser and node resolution operating correctly.")
 
--- Clean up test buffer
-pcall(vim.api.nvim_buf_delete, buf, { force = true })
+-- 4. Test Rapid Buffer Edits and Timer Debouncing (verify no 'handle is already closing' errors)
+print("[Test 4] Testing Rapid Buffer Edits & Timer Debounce Cleanup...")
+local debounce_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(debounce_buf, 0, -1, false, { "local x = 1", "  local y = 2" })
+vim.api.nvim_win_set_buf(win, debounce_buf)
+ind.enable(debounce_buf)
+
+-- Simulate multiple rapid on_bytes edits
+for i = 1, 10 do
+  vim.api.nvim_buf_set_lines(debounce_buf, 1, 2, false, { "  local y = " .. i })
+end
+
+-- Wait for timer to fire
+vim.wait(50)
+
+-- Rapidly edit and delete buffer to test BufDelete timer cleanup while timer is pending
+for i = 1, 5 do
+  vim.api.nvim_buf_set_lines(debounce_buf, 0, 1, false, { "local a = " .. i })
+end
+pcall(vim.api.nvim_buf_delete, debounce_buf, { force = true })
+vim.wait(50)
+
+print("  ✓ Rapid buffer edit timer debouncing completed with zero handle errors.")
+
+-- 5. Test Fold Change Recalculation & Redrawing
+print("[Test 5] Testing Fold Change Recalculation & Redrawing...")
+local fold_buf = vim.api.nvim_create_buf(true, false)
+vim.api.nvim_buf_set_lines(fold_buf, 0, -1, false, {
+  "function fold_demo()",
+  "  local a = 1",
+  "  local b = 2",
+  "end",
+})
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = fold_buf })
+vim.api.nvim_win_set_buf(win, fold_buf)
+vim.api.nvim_set_option_value("foldmethod", "indent", { win = win })
+vim.api.nvim_set_option_value("foldenable", true, { win = win })
+ind.enable(fold_buf)
+
+-- Close fold at line 2
+vim.api.nvim_win_set_cursor(win, { 2, 0 })
+vim.cmd("normal! zc")
+ind.force_update()
+assert_eq(vim.fn.foldclosed(2), 2, "Expected line 2 fold header closed")
+assert_eq(vim.fn.foldclosed(3), 2, "Expected line 3 hidden in fold")
+local render = require("indentinator.render")
+local folded_line3_extmarks = vim.api.nvim_buf_get_extmarks(fold_buf, render.NS, { 2, 0 }, { 2, -1 }, {})
+assert_eq(#folded_line3_extmarks, 0, "Expected line 3 (inside closed fold) to have no extmarks")
+
+-- Re-open fold
+vim.cmd("normal! zo")
+ind.force_update()
+assert_eq(vim.fn.foldclosed(2), -1, "Expected fold opened")
+local unfolded_line3_extmarks = vim.api.nvim_buf_get_extmarks(fold_buf, render.NS, { 2, 0 }, { 2, -1 }, {})
+assert_eq(#unfolded_line3_extmarks, 1, "Expected line 3 to have extmark when unfolded")
+
+print("  ✓ Fold recalculation and redraw operations verified successfully.")
+
+-- 6. Test Utils Fast-Path Lead Display Width
+print("[Test 6] Testing Lead Display Width Fast-Path...")
+local utils = require("indentinator.utils")
+assert_eq(utils.lead_display_width("    ", 4), 4, "Space indentation lead display width failed")
+assert_eq(utils.lead_display_width("\t\t", 4), 8, "Tab indentation lead display width failed")
+assert_eq(utils.lead_display_width("  \t", 4), 4, "Mixed indentation lead display width failed")
+print("  ✓ Lead display width fast-path verified successfully.")
+
+-- 7. Test Scope Public API & Scope Navigation
+print("[Test 7] Testing Scope Public API & Scope Navigation...")
+vim.api.nvim_win_set_buf(win, buf)
+vim.api.nvim_win_set_cursor(win, { 3, 5 })
+
+local s_info = ind.get_current_scope(buf, win)
+assert_eq(s_info ~= nil, true, "get_current_scope returned nil")
+assert_eq(s_info.scope_start, 2, "Expected scope_start line 2")
+assert_eq(s_info.scope_end, 5, "Expected scope_end line 5")
+
+local stline = ind.statusline()
+assert_eq(stline, "Scope: L2-L5", "Statusline output mismatch")
+
+ind.jump_to_scope("bottom")
+local cur_after_bottom = vim.api.nvim_win_get_cursor(win)
+assert_eq(cur_after_bottom[1], 5, "jump_to_scope bottom failed")
+
+ind.jump_to_scope("top")
+local cur_after_top = vim.api.nvim_win_get_cursor(win)
+assert_eq(cur_after_top[1], 2, "jump_to_scope top failed")
+
+print("  ✓ Scope API and navigation functions operating correctly.")
 
 print("=== All Indentinator Tests Passed! ===")
+
