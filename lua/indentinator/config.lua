@@ -100,6 +100,7 @@ M.defaults = {
     range = "block",        -- "block" (current block only) or "global" (entire column)
     underline = false,      -- underline the top line of the active scope block
     underline_end = false,  -- underline the bottom line of the active scope block
+    underline_style = "underline", -- underline font style: "underline", "underdouble", "undercurl", "underdashed", "underdotted", "none"
     corner = true,          -- draw corner characters (┏ and ┗) at scope top/bottom boundaries
     corner_top = nil,       -- custom top corner char (nil defaults to style preset, e.g. "┏")
     corner_bottom = nil,    -- custom bottom corner char (nil defaults to style preset, e.g. "┗")

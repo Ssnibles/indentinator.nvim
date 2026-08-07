@@ -498,7 +498,10 @@ end
 --- Initialises the default highlight groups.
 function M.set_hl()
   local scope_style = { fg = "#cdd6f4", bold = true, sp = "#cdd6f4", default = true }
-  local style_opt = config.defaults and config.defaults.scope and config.defaults.scope.underline_style or "underdouble"
+  local style_opt = (config.values and config.values.scope and config.values.scope.underline_style)
+    or (config.defaults and config.defaults.scope and config.defaults.scope.underline_style)
+    or "underline"
+
   if style_opt == "underdouble" then
     scope_style.underdouble = true
   elseif style_opt == "undercurl" then
@@ -507,6 +510,8 @@ function M.set_hl()
     scope_style.underdashed = true
   elseif style_opt == "underdotted" then
     scope_style.underdotted = true
+  elseif style_opt == "none" then
+    scope_style.underline = false
   else
     scope_style.underline = true
   end
