@@ -86,7 +86,7 @@ function M.build_virt_text(
     else
       local fill_char = " "
       local g_hl = draw_gap_hl and gap_hl or nil
-      if active_col and (col > active_col) and (is_scope_start or is_scope_end) and use_corner then
+      if active_col and (col > active_col) and (col < active_col + step) and (is_scope_start or is_scope_end) and use_corner then
         fill_char = u_char
         g_hl = current_hl
       end

@@ -379,5 +379,38 @@ assert_eq(#found_close >= 1, true, "Should find '}' in closing line")
 
 print("  ✓ Recursive AST & multi-language delimiter resolution verified successfully.")
 
+-- 16. Test Corner Underline Step Capping
+print("[Test 16] Testing Corner Underline Step Capping...")
+local test_chunks = render.build_virt_text(
+  12, -- display_col
+  4,  -- width
+  0,  -- active_col
+  "all", -- show_current
+  true, -- show_first
+  "│", -- char
+  "│", -- current_char
+  true, -- is_scope_start
+  false, -- is_scope_end
+  true, -- use_corner
+  "┏", -- corner_top
+  "┗", -- corner_bottom
+  "━", -- underline_char
+  "IndentinatorChar",
+  "IndentinatorCurrent",
+  "IndentinatorGap",
+  false,
+  0
+)
+assert_eq(#test_chunks, 12, "Should return 12 chunks for display_col 12")
+assert_eq(test_chunks[1][1], "┏", "Column 0 should be top corner")
+assert_eq(test_chunks[2][1], "━", "Column 1 should be underline connector")
+assert_eq(test_chunks[3][1], "━", "Column 2 should be underline connector")
+assert_eq(test_chunks[4][1], "━", "Column 3 should be underline connector")
+assert_eq(test_chunks[5][1], "│", "Column 4 should be normal guide line")
+assert_eq(test_chunks[6][1], " ", "Column 5 should be space gap")
+assert_eq(test_chunks[9][1], "│", "Column 8 should be normal guide line")
+
+print("  ✓ Corner underline step capping verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 
