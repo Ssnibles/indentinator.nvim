@@ -628,5 +628,109 @@ assert_eq(resolved_scope.corner, false, "Scope corners alias should set corner o
 
 print("  ✓ Corner fallback at active_col 0 & configurable scope corners verified successfully.")
 
+-- 25. Test Unattached Treesitter Parser Graceful Fallback & Lifecycle Cleanup
+print("[Test 25] Testing Missing Treesitter Parser Fallback & Buffer Cleanup...")
+local no_ts_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(no_ts_buf, 0, -1, false, { "text line 1", "  text line 2", "    text line 3" })
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = no_ts_buf })
+vim.api.nvim_set_option_value("filetype", "unknown_type_without_parser", { buf = no_ts_buf })
+vim.api.nvim_win_set_buf(win, no_ts_buf)
+vim.api.nvim_win_set_cursor(win, { 2, 2 })
+
+ind.setup({
+  scope = {
+    enabled = true,
+    treesitter = true,
+  },
+})
+ind.force_update()
+
+local no_ts_scope = ind.get_current_scope(no_ts_buf, win)
+assert_eq(no_ts_scope ~= nil, true, "Scope detection should gracefully fall back to indentation when TS parser is missing")
+assert_eq(no_ts_scope.scope_start, 2, "Indentation scope start fallback line 2")
+
+-- Test state purging on BufWipeout
+local state_mod = require("indentinator.state")
+ind.enable(no_ts_buf)
+assert_eq(state_mod.state.enabled[no_ts_buf], true, "Buffer should be tracked as enabled")
+vim.api.nvim_exec_autocmds("BufWipeout", { buffer = no_ts_buf })
+assert_eq(state_mod.state.enabled[no_ts_buf], nil, "BufWipeout should clear state entry")
+pcall(vim.api.nvim_buf_delete, no_ts_buf, { force = true })
+
+print("  ✓ Missing Treesitter parser fallback & buffer cleanup verified successfully.")
+
+-- 26. Test Bounded Blank Line Search Depth
+print("[Test 26] Testing MAX_SEARCH_DEPTH Bound on Blank Line Scanning...")
+local utils_mod = require("indentinator.utils")
+local large_blank_buf = vim.api.nvim_create_buf(false, true)
+local lines_table = {}
+for i = 1, 3000 do
+  lines_table[i] = ""
+end
+lines_table[1] = "  non_blank"
+vim.api.nvim_buf_set_lines(large_blank_buf, 0, -1, false, lines_table)
+
+local found_above = utils_mod.find_indent_above(large_blank_buf, 2500, 2)
+assert_eq(found_above, 0, "find_indent_above should respect MAX_SEARCH_DEPTH limit (2000 lines) and return 0")
+pcall(vim.api.nvim_buf_delete, large_blank_buf, { force = true })
+
+print("  ✓ MAX_SEARCH_DEPTH bound on blank line scanning verified successfully.")
+
+-- 27. Test Preservation of Standard Indent Guides Outside Active Scope
+print("[Test 27] Testing Preservation of Standard Indent Guides Outside Active Scope...")
+local scope_preservation_buf = vim.api.nvim_create_buf(false, false)
+local scope_preservation_code = [[
+function outer()
+  local line1 = 1
+  if true then
+    local line2 = 2
+  end
+  local line3 = 3
+end]]
+vim.api.nvim_buf_set_lines(scope_preservation_buf, 0, -1, false, vim.split(scope_preservation_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = scope_preservation_buf })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = scope_preservation_buf })
+vim.api.nvim_win_set_buf(win, scope_preservation_buf)
+vim.api.nvim_win_set_height(win, 20)
+
+-- Cursor inside `if true then` block (line 5: `local line2 = 2`)
+vim.api.nvim_win_set_cursor(win, { 5, 5 })
+vim.cmd("redraw")
+
+ind.setup({
+  scope = {
+    enabled = true,
+    treesitter = true,
+  },
+})
+ind.force_update()
+
+-- Retrieve virtual text extmarks for line 3 (`local line1 = 1`, row index 2) and line 7 (`local line3 = 3`, row index 6)
+local render_mod = require("indentinator.render")
+local all_marks = vim.api.nvim_buf_get_extmarks(scope_preservation_buf, render_mod.NS, { 0, 0 }, { -1, -1 }, { details = true })
+local mark_rows = {}
+local found_row2_guide = false
+for _, em in ipairs(all_marks) do
+  mark_rows[em[2]] = true
+  if em[2] == 2 then -- Row index 2 (`local line1 = 1`)
+    local details = em[4]
+    if details and details.virt_text then
+      for idx, chunk in ipairs(details.virt_text) do
+        if (chunk[1] == "│" or chunk[1] == "┃") and (chunk[2] == "IndentinatorGuide" or chunk[2] == "IndentinatorCurrentGuide") then
+          found_row2_guide = true
+        end
+      end
+    end
+  end
+end
+
+assert_eq(mark_rows[2] == true, true, "Row 2 (line 3) should have guide extmark")
+assert_eq(found_row2_guide, true, "Row 2 should preserve guide character and highlight outside inner local scope")
+
+pcall(vim.api.nvim_buf_delete, scope_preservation_buf, { force = true })
+print("  ✓ Preservation of standard indent guides outside active scope verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
+
+
 

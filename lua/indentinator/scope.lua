@@ -1,5 +1,10 @@
 local utils = require("indentinator.utils")
 
+local api = vim.api
+local nvim_buf_get_lines = api.nvim_buf_get_lines
+local nvim_win_get_cursor = api.nvim_win_get_cursor
+local nvim_buf_line_count = api.nvim_buf_line_count
+
 local M = {}
 
 M.IGNORE_AST_TYPES = {
@@ -187,6 +192,25 @@ M.CLOSE_DELIMITER_TYPES = {
   ["elsif"] = true, ["until"] = true, ["/>"] = true, ["</"] = true,
 }
 
+local OPEN_KEYWORDS = {
+  "for", "foreach", "while", "if", "elseif", "elif", "elsif", "else", "repeat", "until",
+  "do", "then", "begin", "function", "func", "fn", "fun", "def", "defp", "defmodule",
+  "defmacro", "defprotocol", "defimpl", "class", "struct", "enum", "union", "interface",
+  "trait", "impl", "module", "namespace", "package", "type", "switch", "case", "select",
+  "try", "catch", "except", "finally", "rescue", "ensure", "unless", "with", "where",
+  "loop", "match", "defer", "go", "pub", "public", "private", "protected", "static",
+  "async", "unsafe", "override", "default", "when", "of", "guard", "proc", "method",
+  "iterator", "macro", "template", "concept", "record", "cond", "receive", "test"
+}
+
+local CLOSE_KEYWORDS = {
+  "end", "done", "fi", "esac", "rescue", "ensure", "until", "endif", "endfunction",
+  "endfor", "endforeach", "endwhile", "endswitch", "enddeclare"
+}
+
+local OPEN_CHARS = { ["{"] = true, ["["] = true, ["("] = true, [")"] = true, ["]"] = true, ["}"] = true }
+local CLOSE_CHARS = { ["}"] = true, ["]"] = true, [")"] = true }
+
 --- Determines the start and end rows of the active block scope.
 ---@param buf number The buffer handle
 ---@param cursor_row number The cursor line (1-indexed)
@@ -196,7 +220,7 @@ M.CLOSE_DELIMITER_TYPES = {
 ---@return number|nil The start row (1-indexed), or nil
 ---@return number|nil The end row (1-indexed), or nil
 function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
-  local line_count = vim.api.nvim_buf_line_count(buf)
+  local line_count = nvim_buf_line_count(buf)
   if line_count == 0 or not active_col then return nil, nil end
 
   local limit = active_col + width
@@ -205,7 +229,7 @@ function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
 
   -- If the cursor line is non-blank and its own indent equals active_col, it IS
   -- the scope-opener: no upward walk needed.
-  local ok_cur, cur_lines = pcall(vim.api.nvim_buf_get_lines, buf, cursor_row - 1, cursor_row, false)
+  local ok_cur, cur_lines = pcall(nvim_buf_get_lines, buf, cursor_row - 1, cursor_row, false)
   local cursor_is_opener = false
   if ok_cur and cur_lines and cur_lines[1] then
     local cl = cur_lines[1]
@@ -221,7 +245,7 @@ function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
     local crossed_blank = false
     while current > 0 do
       local chunk_start = math.max(1, current - 50 + 1)
-      local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, chunk_start - 1, current, false)
+      local ok, lines = pcall(nvim_buf_get_lines, buf, chunk_start - 1, current, false)
       if not ok or #lines == 0 then break end
 
       local stopped = false
@@ -257,7 +281,7 @@ function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
   local current = cursor_row + 1
   while current <= line_count do
     local chunk_end = math.min(line_count, current + 50 - 1)
-    local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, current - 1, chunk_end, false)
+    local ok, lines = pcall(nvim_buf_get_lines, buf, current - 1, chunk_end, false)
     if not ok or #lines == 0 then break end
 
     local stopped = false
@@ -284,7 +308,7 @@ function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
     local pre_trim_end = scope_end
     local check_count = math.min(50, scope_end - scope_start)
     local check_start = scope_end - check_count + 1
-    local ok_b, trim_lines = pcall(vim.api.nvim_buf_get_lines, buf, check_start - 1, scope_end, false)
+    local ok_b, trim_lines = pcall(nvim_buf_get_lines, buf, check_start - 1, scope_end, false)
     if ok_b and trim_lines and #trim_lines > 0 then
       for idx = #trim_lines, 1, -1 do
         local t = trim_lines[idx]
@@ -305,6 +329,7 @@ function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
 end
 
 --- Determines scope range and active guide column using Treesitter AST if available.
+--- Gracefully handles missing/unattached parsers and injected languages.
 ---@param buf number The buffer handle
 ---@param win number The window handle
 ---@param width number The default indentation width
@@ -312,7 +337,8 @@ end
 ---@return number|nil scope_start (1-indexed)
 ---@return number|nil scope_end (1-indexed)
 ---@return number|nil active_col
-function M.get_treesitter_scope_range(buf, win, _width, tabstop)
+---@return userdata|nil scope_node
+function M.get_treesitter_scope_range(buf, win, width, tabstop)
   if not vim.treesitter or not vim.treesitter.get_parser then
     return nil, nil, nil
   end
@@ -322,22 +348,43 @@ function M.get_treesitter_scope_range(buf, win, _width, tabstop)
 
   pcall(function() parser:parse() end)
 
-  local cursor = vim.api.nvim_win_get_cursor(win)
+  local cursor = nvim_win_get_cursor(win)
   local cursor_row = cursor[1] - 1
   local cursor_col = cursor[2]
 
   local node = nil
-  if vim.treesitter.get_node then
+
+  -- Handle injected language trees safely
+  pcall(function()
+    if parser.for_each_tree then
+      parser:for_each_tree(function(tree, ltree)
+        if tree and ltree then
+          local root = tree:root()
+          if root then
+            local r_s, r_sc, r_e, r_ec = root:range()
+            if cursor_row >= r_s and cursor_row <= r_e then
+              local n = root:named_descendant_for_range(cursor_row, cursor_col, cursor_row, cursor_col)
+              if n then node = n end
+            end
+          end
+        end
+      end)
+    end
+  end)
+
+  if not node and vim.treesitter.get_node then
     local ok_n, n = pcall(vim.treesitter.get_node, { bufnr = buf, buf = buf, pos = { cursor_row, cursor_col } })
     if ok_n then node = n end
   end
 
   if not node then
-    local trees = parser:trees()
-    if trees and trees[1] then
+    local ok_t, trees = pcall(function() return parser:trees() end)
+    if ok_t and trees and trees[1] then
       local root = trees[1]:root()
       if root then
-        node = root:named_descendant_for_range(cursor_row, cursor_col, cursor_row, cursor_col)
+        pcall(function()
+          node = root:named_descendant_for_range(cursor_row, cursor_col, cursor_row, cursor_col)
+        end)
       end
     end
   end
@@ -382,7 +429,7 @@ function M.get_treesitter_scope_range(buf, win, _width, tabstop)
 
   local active_col = 0
   local target_row = (header_node and header_node:range()) or start_row
-  local ok_l, lines = pcall(vim.api.nvim_buf_get_lines, buf, target_row, target_row + 1, false)
+  local ok_l, lines = pcall(nvim_buf_get_lines, buf, target_row, target_row + 1, false)
   if ok_l and lines and lines[1] then
     local lead = lines[1]:match("^%s*")
     local hdr_indent = utils.lead_display_width(lead or "", tabstop)
@@ -469,7 +516,7 @@ end
 ---@param line_text string
 ---@return string Sanitized line text with strings replaced by spaces and comments stripped
 local function sanitize_line(line_text)
-  if not line_text then return "" end
+  if not line_text or line_text == "" then return "" end
   local clean = line_text:gsub('\\"', "  "):gsub("\\'", "  "):gsub("\\`", "  ")
   clean = clean:gsub('"[^"]*"', function(m) return string.rep(" ", #m) end)
   clean = clean:gsub("'[^']*'", function(m) return string.rep(" ", #m) end)
@@ -480,6 +527,36 @@ local function sanitize_line(line_text)
   return clean
 end
 
+--- Internal helper to search text for keywords and single characters.
+---@param clean_text string Sanitized line text
+---@param keywords string[] List of keywords to search
+---@param char_map table<string, boolean> Set of characters to match
+---@return table[] Raw list of { s_col, e_col }
+local function search_delimiters(clean_text, keywords, char_map)
+  local raw_matches = {}
+
+  for _, kw in ipairs(keywords) do
+    local init_pos = 1
+    local pat = "%f[%w_]" .. kw .. "%f[%W]"
+    while init_pos <= #clean_text do
+      local s, e = clean_text:find(pat, init_pos)
+      if not s then break end
+      table.insert(raw_matches, { s - 1, e })
+      init_pos = e + 1
+    end
+  end
+
+  local len = #clean_text
+  for col = 1, len do
+    local char = clean_text:sub(col, col)
+    if char_map[char] then
+      table.insert(raw_matches, { col - 1, col })
+    end
+  end
+
+  return raw_matches
+end
+
 --- Finds delimiter byte ranges (0-indexed col start/end) on line_text for scope start (is_start=true)
 --- or scope end (is_start=false).
 ---@param line_text string
@@ -488,59 +565,10 @@ end
 function M.find_delimiters(line_text, is_start)
   if not line_text or line_text == "" then return {} end
   local clean_text = sanitize_line(line_text)
-  local raw_matches = {}
-
-  if is_start then
-    local open_keywords = {
-      "for", "foreach", "while", "if", "elseif", "elif", "elsif", "else", "repeat", "until",
-      "do", "then", "begin", "function", "func", "fn", "fun", "def", "defp", "defmodule",
-      "defmacro", "defprotocol", "defimpl", "class", "struct", "enum", "union", "interface",
-      "trait", "impl", "module", "namespace", "package", "type", "switch", "case", "select",
-      "try", "catch", "except", "finally", "rescue", "ensure", "unless", "with", "where",
-      "loop", "match", "defer", "go", "pub", "public", "private", "protected", "static",
-      "async", "unsafe", "override", "default", "when", "of", "guard", "proc", "method",
-      "iterator", "macro", "template", "concept", "record", "cond", "receive", "test"
-    }
-    for _, kw in ipairs(open_keywords) do
-      local init_pos = 1
-      local pat = "%f[%w_]" .. kw .. "%f[%W]"
-      while init_pos <= #clean_text do
-        local s, e = clean_text:find(pat, init_pos)
-        if not s then break end
-        table.insert(raw_matches, { s - 1, e })
-        init_pos = e + 1
-      end
-    end
-
-    for col = 1, #clean_text do
-      local char = clean_text:sub(col, col)
-      if char == "{" or char == "[" or char == "(" or char == ")" or char == "]" or char == "}" then
-        table.insert(raw_matches, { col - 1, col })
-      end
-    end
-  else
-    local close_keywords = {
-      "end", "done", "fi", "esac", "rescue", "ensure", "until", "endif", "endfunction",
-      "endfor", "endforeach", "endwhile", "endswitch", "enddeclare"
-    }
-    for _, kw in ipairs(close_keywords) do
-      local init_pos = 1
-      local pat = "%f[%w_]" .. kw .. "%f[%W]"
-      while init_pos <= #clean_text do
-        local s, e = clean_text:find(pat, init_pos)
-        if not s then break end
-        table.insert(raw_matches, { s - 1, e })
-        init_pos = e + 1
-      end
-    end
-
-    for col = 1, #clean_text do
-      local char = clean_text:sub(col, col)
-      if char == "}" or char == "]" or char == ")" then
-        table.insert(raw_matches, { col - 1, col })
-      end
-    end
-  end
+  
+  local keywords = is_start and OPEN_KEYWORDS or CLOSE_KEYWORDS
+  local char_map = is_start and OPEN_CHARS or CLOSE_CHARS
+  local raw_matches = search_delimiters(clean_text, keywords, char_map)
 
   local unique = {}
   local matches = {}

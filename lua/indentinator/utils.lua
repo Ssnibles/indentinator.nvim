@@ -1,5 +1,13 @@
 local config = require("indentinator.config")
 
+local api = vim.api
+local nvim_buf_get_lines = api.nvim_buf_get_lines
+local nvim_get_option_value = api.nvim_get_option_value
+local nvim_win_get_cursor = api.nvim_win_get_cursor
+local nvim_buf_line_count = api.nvim_buf_line_count
+
+local MAX_SEARCH_DEPTH = 2000
+
 local M = {}
 
 --- Safely gets a numeric option value from a buffer.
@@ -7,7 +15,7 @@ local M = {}
 ---@param opt string The option name
 ---@return number|nil The option value if valid, or nil
 function M.get_buf_opt(buf, opt)
-  local ok, val = pcall(vim.api.nvim_get_option_value, opt, { buf = buf })
+  local ok, val = pcall(nvim_get_option_value, opt, { buf = buf })
   if ok and type(val) == "number" and val > 0 then return val end
   return nil
 end
@@ -34,25 +42,23 @@ end
 ---@param tabstop number The tabstop setting of the buffer
 ---@return number The total display column width
 function M.lead_display_width(lead, tabstop)
+  if not lead or lead == "" then return 0 end
   if not lead:find("\t", 1, true) then
     return #lead
   end
   local display_col = 0
   local len = #lead
-  local i = 1
-  while i <= len do
-    local byte = lead:byte(i)
-    if byte == 9 then
+  for i = 1, len do
+    if lead:byte(i) == 9 then
       display_col = display_col + (tabstop - (display_col % tabstop))
     else
       display_col = display_col + 1
     end
-    i = i + 1
   end
   return display_col
 end
 
---- Finds the first non-blank line scanning upwards from start_row.
+--- Finds the first non-blank line scanning upwards from start_row with a safety depth limit.
 ---@param buf number The buffer handle
 ---@param start_row number The starting row (1-indexed)
 ---@return string|nil The text content of the line
@@ -61,9 +67,10 @@ end
 function M.find_non_blank_up(buf, start_row)
   local chunk_size = 100
   local current = start_row
-  while current > 0 do
-    local chunk_start = math.max(1, current - chunk_size + 1)
-    local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, chunk_start - 1, current, false)
+  local min_allowed = math.max(1, start_row - MAX_SEARCH_DEPTH)
+  while current >= min_allowed do
+    local chunk_start = math.max(min_allowed, current - chunk_size + 1)
+    local ok, lines = pcall(nvim_buf_get_lines, buf, chunk_start - 1, current, false)
     if not ok or #lines == 0 then break end
     for i = #lines, 1, -1 do
       local t = lines[i]
@@ -77,7 +84,7 @@ function M.find_non_blank_up(buf, start_row)
   return nil
 end
 
---- Finds the first non-blank line scanning downwards from start_row.
+--- Finds the first non-blank line scanning downwards from start_row with a safety depth limit.
 ---@param buf number The buffer handle
 ---@param start_row number The starting row (1-indexed)
 ---@param line_count number The total line count in the buffer
@@ -87,9 +94,10 @@ end
 function M.find_non_blank_down(buf, start_row, line_count)
   local chunk_size = 100
   local current = start_row
-  while current <= line_count do
-    local chunk_end = math.min(line_count, current + chunk_size - 1)
-    local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, current - 1, chunk_end, false)
+  local max_allowed = math.min(line_count, start_row + MAX_SEARCH_DEPTH)
+  while current <= max_allowed do
+    local chunk_end = math.min(max_allowed, current + chunk_size - 1)
+    local ok, lines = pcall(nvim_buf_get_lines, buf, current - 1, chunk_end, false)
     if not ok or #lines == 0 then break end
     for i = 1, #lines do
       local t = lines[i]
@@ -135,14 +143,14 @@ end
 ---@param win number The window handle
 ---@return number|nil The active column index, or nil if none
 function M.get_current_indent_col(buf, win)
-  local cursor = vim.api.nvim_win_get_cursor(win)
+  local cursor = nvim_win_get_cursor(win)
   local row = cursor[1]
 
-  local line_count = vim.api.nvim_buf_line_count(buf)
+  local line_count = nvim_buf_line_count(buf)
   if line_count == 0 then return nil end
 
   local target_row = row
-  local ok_l, lines = pcall(vim.api.nvim_buf_get_lines, buf, target_row - 1, target_row, false)
+  local ok_l, lines = pcall(nvim_buf_get_lines, buf, target_row - 1, target_row, false)
   if not ok_l or #lines == 0 then return nil end
 
   local text = lines[1] or ""
@@ -197,3 +205,4 @@ function M.get_current_indent_col(buf, win)
 end
 
 return M
+

@@ -8,6 +8,8 @@
 ---@field last_leftcol table<number, number|nil> Last window leftcol tracked per window
 ---@field timers table<number, uv_timer_t|nil> Per-buffer debounce timers for on_bytes renders
 
+local uv = vim.uv or vim.loop
+
 local M = {}
 
 ---@type IndentinatorState
@@ -60,10 +62,11 @@ function M.clear_win_state(win)
   for _, ranges in pairs(M.state.windows) do
     ranges[win] = nil
   end
-  if M.state.current_indent then M.state.current_indent[win] = nil end
-  if M.state.last_cursor_row then M.state.last_cursor_row[win] = nil end
-  if M.state.last_cursor_col then M.state.last_cursor_col[win] = nil end
-  if M.state.last_leftcol then M.state.last_leftcol[win] = nil end
+  M.state.current_indent[win] = nil
+  M.state.last_cursor_row[win] = nil
+  M.state.last_cursor_col[win] = nil
+  M.state.last_leftcol[win] = nil
 end
 
 return M
+

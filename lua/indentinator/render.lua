@@ -4,9 +4,22 @@ local state = state_mod.state
 local utils = require("indentinator.utils")
 local scope = require("indentinator.scope")
 
+local api = vim.api
+local nvim_buf_is_valid = api.nvim_buf_is_valid
+local nvim_buf_is_loaded = api.nvim_buf_is_loaded
+local nvim_win_is_valid = api.nvim_win_is_valid
+local nvim_buf_get_lines = api.nvim_buf_get_lines
+local nvim_get_option_value = api.nvim_get_option_value
+local nvim_buf_set_extmark = api.nvim_buf_set_extmark
+local nvim_buf_clear_namespace = api.nvim_buf_clear_namespace
+local nvim_win_get_cursor = api.nvim_win_get_cursor
+local nvim_buf_line_count = api.nvim_buf_line_count
+local nvim_list_wins = api.nvim_list_wins
+local nvim_win_get_buf = api.nvim_win_get_buf
+
 local M = {}
 
-M.NS = vim.api.nvim_create_namespace("indentinator")
+M.NS = api.nvim_create_namespace("indentinator")
 
 --- Builds the virtual text chunks for a single line overlay.
 ---@param display_col number The indentation display width of the line
@@ -72,10 +85,6 @@ function M.build_virt_text(
       is_guide_pos = false
     end
 
-    if only_scope and active_scope_col and col == active_scope_col and not is_current then
-      is_guide_pos = false
-    end
-
     local effective_use_corner = use_corner
     if use_corner and (not active_col or active_col == 0 or display_col <= active_col + 1) then
       effective_use_corner = false
@@ -95,7 +104,7 @@ function M.build_virt_text(
           guide_c = current_char or char
         end
       end
-      table.insert(chunks, { guide_c, hl })
+      chunks[#chunks + 1] = { guide_c, hl }
     else
       local fill_char = " "
       local g_hl = draw_gap_hl and gap_hl or nil
@@ -103,7 +112,7 @@ function M.build_virt_text(
         fill_char = u_char
         g_hl = current_hl
       end
-      table.insert(chunks, { fill_char, g_hl })
+      chunks[#chunks + 1] = { fill_char, g_hl }
     end
     col = col + 1
   end
@@ -119,9 +128,9 @@ function M.clear_window(buf, win)
   local r = ranges[win]
   if r then
     local start_line = math.max(0, r[1] - 1)
-    local line_count = vim.api.nvim_buf_line_count(buf)
+    local line_count = nvim_buf_line_count(buf)
     local end_line = math.min(line_count, r[2] + 1)
-    pcall(vim.api.nvim_buf_clear_namespace, buf, M.NS, start_line, end_line)
+    pcall(nvim_buf_clear_namespace, buf, M.NS, start_line, end_line)
     ranges[win] = nil
   end
 end
@@ -132,7 +141,7 @@ function M.clear_window_all(buf)
   if state.windows[buf] then
     state.windows[buf] = nil
   end
-  pcall(vim.api.nvim_buf_clear_namespace, buf, M.NS, 0, -1)
+  pcall(nvim_buf_clear_namespace, buf, M.NS, 0, -1)
 end
 
 --- Renders indentation guides for the visible lines of a buffer in a specific window.
@@ -140,7 +149,7 @@ end
 ---@param win number The window handle
 ---@param skip_clear boolean|nil Whether to skip clearing prior extmarks (used by render_all)
 function M.render(buf, win, skip_clear)
-  if not buf or not win or not vim.api.nvim_win_is_valid(win) or not vim.api.nvim_buf_is_loaded(buf) then return end
+  if not buf or not win or not nvim_win_is_valid(win) or not nvim_buf_is_loaded(buf) then return end
   if not config.is_enabled(buf, state) then
     M.clear_window(buf, win)
     return
@@ -152,7 +161,7 @@ function M.render(buf, win, skip_clear)
 
   local leftcol = 0
   local ok_view, view = pcall(function()
-    return vim.api.nvim_win_call(win, function()
+    return api.nvim_win_call(win, function()
       return { vim.fn.line("w0"), vim.fn.line("w$"), vim.fn.winsaveview().leftcol }
     end)
   end)
@@ -161,13 +170,13 @@ function M.render(buf, win, skip_clear)
   if type(r0) ~= "number" or type(r1) ~= "number" or r1 < r0 or r0 <= 0 then return end
   leftcol = (type(view[3]) == "number" and view[3] >= 0) and view[3] or 0
 
-  local ok_l, lines = pcall(vim.api.nvim_buf_get_lines, buf, r0 - 1, r1, false)
+  local ok_l, lines = pcall(nvim_buf_get_lines, buf, r0 - 1, r1, false)
   if not ok_l or #lines == 0 then
     if not skip_clear then M.clear_window(buf, win) end
     return
   end
 
-  local ok_ft, ft = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
+  local ok_ft, ft = pcall(nvim_get_option_value, "filetype", { buf = buf })
   ft = (ok_ft and ft) or ""
 
   local width = utils.indent_width(buf, ft)
@@ -184,7 +193,7 @@ function M.render(buf, win, skip_clear)
     if scope_start == nil then
       active_col = utils.get_current_indent_col(buf, win)
       if active_col and scope_cfg.range == "block" then
-        local cursor = vim.api.nvim_win_get_cursor(win)
+        local cursor = nvim_win_get_cursor(win)
         scope_start, scope_end = scope.get_scope_range(buf, cursor[1], active_col, width, tabstop)
       end
     end
@@ -212,7 +221,7 @@ function M.render(buf, win, skip_clear)
   if not is_smart then
     local k = 1
     local nlines = #lines
-    local line_count = vim.api.nvim_buf_line_count(buf)
+    local line_count = nvim_buf_line_count(buf)
     while k <= nlines do
       local text = lines[k]
       local lead = text:match("^%s*")
@@ -314,7 +323,7 @@ function M.render(buf, win, skip_clear)
 
       if is_in_scope and bg_enabled then
         if bg_full_block or is_this_scope_start or is_this_scope_end then
-          pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
+          pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
             end_row = line_idx,
             end_col = 0,
             line_hl_group = bg_hl,
@@ -328,7 +337,7 @@ function M.render(buf, win, skip_clear)
         local text_len = #scope_line_text
         local lead_len = #(scope_line_text:match("^%s*"))
         if text_len > lead_len then
-          pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, lead_len, {
+          pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, lead_len, {
             end_row = line_idx,
             end_col = text_len,
             hl_group = text_hl,
@@ -349,7 +358,7 @@ function M.render(buf, win, skip_clear)
           delims = scope.find_delimiters(line_text, is_this_scope_start)
         end
         for _, range in ipairs(delims) do
-          pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, range[1], {
+          pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, range[1], {
             end_row = line_idx,
             end_col = range[2],
             hl_group = delim_hl,
@@ -413,7 +422,7 @@ function M.render(buf, win, skip_clear)
           end
 
           if has_visible then
-            pcall(vim.api.nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
+            pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
               virt_text = chunks,
               virt_text_win_col = 0,
               hl_mode = "combine",
@@ -434,21 +443,21 @@ end
 --- Triggers rendering on all windows showing the specified buffer.
 ---@param buf number The buffer handle
 function M.render_all(buf)
-  if not buf or not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_buf_is_loaded(buf) then return end
-  local cur_win = pcall(vim.api.nvim_get_current_win) and vim.api.nvim_get_current_win() or nil
+  if not buf or not nvim_buf_is_valid(buf) or not nvim_buf_is_loaded(buf) then return end
+  local cur_win = pcall(api.nvim_get_current_win) and api.nvim_get_current_win() or nil
   local wins = {}
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local ok_b, wb = pcall(vim.api.nvim_win_get_buf, win)
+  for _, win in ipairs(nvim_list_wins()) do
+    local ok_b, wb = pcall(nvim_win_get_buf, win)
     if ok_b and wb == buf then
       if win == cur_win then
-        table.insert(wins, win)
+        wins[#wins + 1] = win
       else
         table.insert(wins, 1, win)
       end
     end
   end
   if #wins > 0 then
-    pcall(vim.api.nvim_buf_clear_namespace, buf, M.NS, 0, -1)
+    pcall(nvim_buf_clear_namespace, buf, M.NS, 0, -1)
     if state.windows[buf] then state.windows[buf] = {} end
     for _, win in ipairs(wins) do
       M.render(buf, win, true)
@@ -459,33 +468,33 @@ end
 --- Attaches buffer-change listeners to the specified buffer.
 ---@param buf number The buffer handle
 function M.attach(buf)
-  if state.attached[buf] and vim.api.nvim_buf_is_loaded(buf) then return end
-  if not vim.api.nvim_buf_is_loaded(buf) then
+  if state.attached[buf] and nvim_buf_is_loaded(buf) then return end
+  if not nvim_buf_is_loaded(buf) then
     state.attached[buf] = nil
     return
   end
 
   local function schedule_render()
-    if not vim.api.nvim_buf_is_valid(buf) then return end
+    if not nvim_buf_is_valid(buf) then return end
 
     local timer = state.timers[buf]
     if timer and not timer:is_closing() then
       timer:stop()
     else
-      timer = vim.uv.new_timer()
+      timer = (vim.uv or vim.loop).new_timer()
       state.timers[buf] = timer
     end
 
     timer:start(15, 0, vim.schedule_wrap(function()
-      if vim.api.nvim_buf_is_valid(buf) then
+      if nvim_buf_is_valid(buf) then
         M.render_all(buf)
       end
     end))
   end
 
-  local ok, res = pcall(vim.api.nvim_buf_attach, buf, false, {
+  local ok, res = pcall(api.nvim_buf_attach, buf, false, {
     on_bytes = function(...)
-      if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_buf_is_loaded(buf) then
+      if not nvim_buf_is_valid(buf) or not nvim_buf_is_loaded(buf) then
         state.attached[buf] = nil
         state_mod.clear_timer(buf)
         return true
@@ -498,12 +507,12 @@ end
 
 --- Initialises the default highlight groups.
 function M.set_hl()
-  vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE", default = true })
-  vim.api.nvim_set_hl(0, "IndentinatorGap", { fg = "#555b6e", bg = "NONE", default = true })
-  vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
-  vim.api.nvim_set_hl(0, "IndentinatorScopeText", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
-  vim.api.nvim_set_hl(0, "IndentinatorScopeBg", { bg = "#1c1e2a", default = true })
-  vim.api.nvim_set_hl(0, "IndentinatorScopeDelimiter", {
+  api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE", default = true })
+  api.nvim_set_hl(0, "IndentinatorGap", { fg = "#555b6e", bg = "NONE", default = true })
+  api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
+  api.nvim_set_hl(0, "IndentinatorScopeText", { fg = "#cdd6f4", bold = true, bg = "NONE", default = true })
+  api.nvim_set_hl(0, "IndentinatorScopeBg", { bg = "#1c1e2a", default = true })
+  api.nvim_set_hl(0, "IndentinatorScopeDelimiter", {
     fg = "#cdd6f4",
     bold = true,
     italic = true,
@@ -514,3 +523,4 @@ function M.set_hl()
 end
 
 return M
+
