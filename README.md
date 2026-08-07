@@ -3,7 +3,9 @@
 A lightweight, high-performance indentation guides plugin for Neovim. Written in pure Lua, it uses modern Neovim APIs to render guides efficiently:
 - Renders visible lines within the current window viewport only (unbounded file sizes cause no performance degradation).
 - Uses a single overlay extmark per line with `virt_text` chunks.
-- Avoids background timers or polling by hook-in on native editor events.
+- Avoids handle churn by reusing native libuv timer handles for event debouncing.
+- Skips invisible fold blocks using viewport jump-ahead logic and fold-enable guards.
+- Fast-path whitespace calculations and per-render-pass configuration caching.
 
 ---
 
@@ -11,7 +13,10 @@ A lightweight, high-performance indentation guides plugin for Neovim. Written in
 
 - **Viewport-Bounded**: Only computes and paints guides for lines visible in the active viewport.
 - **Smart Guide Continuity**: Empty lines inherit guides from surrounding blocks (`smart = false`) or break them (`smart = true`).
-- **Scope Highlighting**: Highlights the current indentation level based on cursor position, with a look-ahead mechanism to correctly highlight block header scopes.
+- **Scope Highlighting & Treesitter**: Highlights the current indentation level based on cursor position, with Treesitter AST node detection that ignores comments/strings and supports multi-language AST containers.
+- **Scope Underlining (Start & End)**: Optionally underline the top line (`underline = true`) and/or closing line (`underline_end = true`) of the active block scope.
+- **Scope Navigation**: Command `:IndentinatorScopeJump` to jump cursor to top or bottom of the active block.
+- **Statusline Integration**: Helper function `require("indentinator").statusline()` for Lualine/Heirline integration.
 - **Dynamic Overrides**: Customize options per filetype or exclude specific buffer types.
 
 ---
@@ -52,7 +57,28 @@ use {
 - `:IndentinatorEnable` — Enable guides in the current buffer.
 - `:IndentinatorDisable` — Disable guides in the current buffer.
 - `:IndentinatorToggle` — Toggle guides in the current buffer (append `!` to toggle in all active buffers).
+- `:IndentinatorScopeJump [top|bottom]` — Jump cursor to the top or bottom of the active scope block.
 - `:IndentinatorHealth` — Run configuration diagnostics.
+
+---
+
+## Lua API & Statusline Integration
+
+- **`require("indentinator").get_current_scope(buf, win)`**:
+  Returns a table containing `{ scope_start = line_num, scope_end = line_num, active_col = col_idx }` or `nil`.
+- **`require("indentinator").jump_to_scope("top" | "bottom")`**:
+  Programmatically jump to the start or end of the current scope block.
+- **`require("indentinator").statusline()`**:
+  Returns a statusline segment string (e.g. `"Scope: L10-L45"`).
+
+Example Lualine integration:
+```lua
+require("lualine").setup({
+  sections = {
+    lualine_x = { require("indentinator").statusline },
+  },
+})
+```
 
 ---
 
@@ -77,6 +103,7 @@ require("indentinator").setup({
     enabled = false,        -- highlight the guide at the cursor's active scope
     range = "block",        -- "block" (current block only) or "global" (entire column)
     underline = false,      -- underline the top line of the active scope block
+    underline_end = false,  -- underline the bottom line of the active scope block
     text_highlight = true,  -- colour the text on the scope-start line
     treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
   },
@@ -112,7 +139,7 @@ Standard highlight definitions:
 | `IndentinatorGuide` | `#555b6e` | Default guide character colour |
 | `IndentinatorGap` | `#555b6e` | Gap fill colour (when `draw_gap_hl = true`) |
 | `IndentinatorCurrentGuide` | `#a6adc8` | Current/active guide character colour |
-| `IndentinatorScopeUnderline` | `#a6adc8` (underlined) | Underline style for the top level of active scopes |
+| `IndentinatorScopeUnderline` | `#a6adc8` (underlined) | Underline style for top/bottom of active scopes |
 | `IndentinatorScopeText` | `#a6adc8` | Foreground colour for scope-start line text |
 
 Highlights are automatically re-applied on `ColorScheme` events. Customise colours in your configuration after loading your preferred colorscheme:
@@ -128,7 +155,7 @@ vim.api.nvim_set_hl(0, "IndentinatorScopeUnderline", { fg = "#a6adc8", bg = "NON
 
 ### Scope Underline Example
 
-With `scope.enabled` and `scope.underline` both set to `true`, the first line of the active block gets an underline when the cursor is anywhere inside it:
+With `scope.enabled` and `scope.underline` (or `scope.underline_end`) set to `true`, the first/last lines of the active block get an underline when the cursor is inside it:
 
 ```lua
 -- "callback = function(ev)" is underlined when cursor is inside this block:
@@ -143,6 +170,7 @@ require("indentinator").setup({
   scope = {
     enabled = true,
     underline = true,
+    underline_end = true,
   },
 })
 ```
