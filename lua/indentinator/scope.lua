@@ -22,6 +22,19 @@ M.IGNORE_AST_TYPES = {
   comment_content = true,
   regex = true,
   regex_pattern = true,
+  ternary_expression = true,
+  conditional_expression = true,
+  binary_expression = true,
+  unary_expression = true,
+  assignment_expression = true,
+  call_expression = true,
+  member_expression = true,
+  parenthesized_expression = true,
+  field_expression = true,
+  property_identifier = true,
+  pair = true,
+  property = true,
+  binding = true,
 }
 
 M.ROOT_AST_TYPES = {
@@ -90,6 +103,10 @@ M.BODY_CONTAINER_TYPES = {
   block_mapping = true,
   block_sequence = true,
   container_decl = true,
+  ui_object_definition = true,
+  ui_object_initializer = true,
+  object_definition = true,
+  component = true,
 }
 
 --- Determines the start and end rows of the active block scope.

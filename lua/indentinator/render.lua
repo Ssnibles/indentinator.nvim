@@ -72,10 +72,11 @@ function M.build_virt_text(
       local hl = is_current and current_hl or char_hl
       local guide_c = char
       if is_current then
+        local is_valid_end_corner = is_scope_end and (display_col <= col + step)
         if is_scope_start and use_corner then
           guide_c = c_top
           hl = current_hl
-        elseif is_scope_end and use_corner then
+        elseif is_valid_end_corner and use_corner then
           guide_c = c_bot
           hl = current_hl
         else
@@ -86,7 +87,8 @@ function M.build_virt_text(
     else
       local fill_char = " "
       local g_hl = draw_gap_hl and gap_hl or nil
-      if active_col and (col > active_col) and (col < active_col + step) and (is_scope_start or is_scope_end) and use_corner then
+      local is_valid_end_corner = is_scope_end and (display_col <= active_col + step)
+      if active_col and (col > active_col) and (col < active_col + step) and (is_scope_start or is_valid_end_corner) and use_corner then
         fill_char = u_char
         g_hl = current_hl
       end
