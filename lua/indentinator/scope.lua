@@ -27,6 +27,28 @@ M.IGNORE_AST_TYPES = {
   binary_expression = true,
   unary_expression = true,
   assignment_expression = true,
+  assignment_statement = true,
+  variable_declaration = true,
+  local_declaration = true,
+  expression_statement = true,
+  return_statement = true,
+  break_statement = true,
+  goto_statement = true,
+  declaration = true,
+  field_declaration = true,
+  lexical_declaration = true,
+  variable_declarator = true,
+  statement = true,
+  simple_statement = true,
+  clause = true,
+  argument_list = true,
+  parameter_list = true,
+  arguments = true,
+  parameters = true,
+  tuple_expression = true,
+  array_expression = true,
+  vector_expression = true,
+  macro_invocation = true,
   call_expression = true,
   member_expression = true,
   parenthesized_expression = true,
@@ -331,19 +353,6 @@ function M.get_treesitter_scope_range(buf, win, _width, tabstop)
       local s_row, _, e_row, _ = curr:range()
       if s_row < e_row then
         if not M.ROOT_AST_TYPES[type_name] then
-          if M.BODY_CONTAINER_TYPES[type_name] then
-            local parent = curr:parent()
-            if parent then
-              local p_type = parent:type()
-              if not M.ROOT_AST_TYPES[p_type] and not M.IGNORE_AST_TYPES[p_type] then
-                local p_s_row, _, p_e_row, _ = parent:range()
-                if p_s_row < p_e_row then
-                  scope_node = parent
-                  break
-                end
-              end
-            end
-          end
           scope_node = curr
           break
         end
@@ -354,16 +363,30 @@ function M.get_treesitter_scope_range(buf, win, _width, tabstop)
 
   if not scope_node then return nil, nil, nil end
 
-  local start_row, _, end_row, _ = scope_node:range()
+  local header_node = nil
+  local parent_node = scope_node:parent()
+  if parent_node then
+    local p_type = parent_node:type()
+    if not M.ROOT_AST_TYPES[p_type] and not M.IGNORE_AST_TYPES[p_type] then
+      local p_s, _, p_e, _ = parent_node:range()
+      if p_s < p_e then
+        header_node = parent_node
+      end
+    end
+  end
+
+  local full_node = header_node or scope_node
+  local start_row, _, end_row, _ = full_node:range()
   local scope_start = start_row + 1
   local scope_end = end_row + 1
 
-  -- Calculate active guide column from the indentation of the scope start line
-  local ok_l, lines = pcall(vim.api.nvim_buf_get_lines, buf, start_row, start_row + 1, false)
   local active_col = 0
+  local target_row = (header_node and header_node:range()) or start_row
+  local ok_l, lines = pcall(vim.api.nvim_buf_get_lines, buf, target_row, target_row + 1, false)
   if ok_l and lines and lines[1] then
     local lead = lines[1]:match("^%s*")
-    active_col = utils.lead_display_width(lead or "", tabstop)
+    local hdr_indent = utils.lead_display_width(lead or "", tabstop)
+    active_col = math.max(0, hdr_indent - (width or 2))
   end
 
   return scope_start, scope_end, active_col, scope_node

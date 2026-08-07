@@ -27,6 +27,8 @@ M.NS = vim.api.nvim_create_namespace("indentinator")
 ---@param gap_hl string The gap highlight group
 ---@param draw_gap_hl boolean Whether gap highlight is enabled
 ---@param start_col number|nil Starting display column index for horizontal scroll (defaults to 0)
+---@param active_scope_col number|nil Active scope column for the view
+---@param only_scope boolean|nil Whether to suppress active guide column outside scope boundaries
 ---@return table[] Array of chunks in format { { text, hl }, ... }
 function M.build_virt_text(
   display_col,
@@ -46,7 +48,9 @@ function M.build_virt_text(
   current_hl,
   gap_hl,
   draw_gap_hl,
-  start_col
+  start_col,
+  active_scope_col,
+  only_scope
 )
   local chunks = {}
   local u_char = (underline_char and underline_char ~= "") and underline_char or "━"
@@ -68,15 +72,23 @@ function M.build_virt_text(
       is_guide_pos = false
     end
 
+    if only_scope and active_scope_col and col == active_scope_col and not is_current then
+      is_guide_pos = false
+    end
+
+    local effective_use_corner = use_corner
+    if use_corner and (not active_col or active_col == 0 or display_col <= active_col + 1) then
+      effective_use_corner = false
+    end
+
     if is_guide_pos then
       local hl = is_current and current_hl or char_hl
       local guide_c = char
       if is_current then
-        local is_valid_end_corner = is_scope_end and (display_col <= col + step)
-        if is_scope_start and use_corner then
+        if is_scope_start and effective_use_corner then
           guide_c = c_top
           hl = current_hl
-        elseif is_valid_end_corner and use_corner then
+        elseif is_scope_end and effective_use_corner then
           guide_c = c_bot
           hl = current_hl
         else
@@ -87,8 +99,7 @@ function M.build_virt_text(
     else
       local fill_char = " "
       local g_hl = draw_gap_hl and gap_hl or nil
-      local is_valid_end_corner = is_scope_end and (display_col <= active_col + step)
-      if active_col and (col > active_col) and (col < active_col + step) and (is_scope_start or is_valid_end_corner) and use_corner then
+      if active_col and (col > active_col) and (col < active_col + step) and (is_scope_start or is_scope_end) and effective_use_corner then
         fill_char = u_char
         g_hl = current_hl
       end
@@ -360,10 +371,17 @@ function M.render(buf, win, skip_clear)
         end
       end
 
-      if disp_col and disp_col > leftcol then
+      local render_col = disp_col or 0
+      if render_col == 0 and line_active_col and scope_start and scope_end and abs_line >= scope_start and abs_line <= scope_end then
+        if lines[k] == "" then
+          render_col = line_active_col + (line_widths[k] or width)
+        end
+      end
+
+      if render_col > leftcol then
         local step_width = line_widths[k] or width
         local chunks = M.build_virt_text(
-          disp_col,
+          render_col,
           step_width,
           line_active_col,
           show_current,
@@ -380,7 +398,9 @@ function M.render(buf, win, skip_clear)
           current_hl,
           gap_hl,
           draw_gap_hl,
-          leftcol
+          leftcol,
+          active_col,
+          scope_cfg.only_scope
         )
         if #chunks > 0 then
           local has_visible = false

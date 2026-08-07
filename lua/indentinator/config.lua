@@ -1,6 +1,7 @@
 ---@class IndentinatorScopeConfig
 ---@field enabled boolean Whether to highlight the active scope guide
 ---@field range string Scope range: "block" (current block) or "global" (full column)
+---@field only_scope boolean Whether to only draw the active scope column within scope boundaries
 ---@field background boolean|string Highlight scope background: true/"block", "boundaries", or false
 ---@field corner boolean Whether to draw corner characters at scope boundaries
 ---@field corner_top string|nil Custom top corner character
@@ -103,6 +104,7 @@ M.defaults = {
   scope = {
     enabled = false,        -- highlight the active scope guide
     range = "block",        -- "block" (current block only) or "global" (entire column)
+    only_scope = true,      -- only draw active scope column within scope boundaries (cut out lines outside scope)
     background = false,     -- highlight scope background: true/"block", "boundaries", or false
     corner = true,          -- draw corner characters (┏ and ┗) at scope top/bottom boundaries
     corner_top = nil,       -- custom top corner char (nil defaults to style preset, e.g. "┏")
@@ -139,6 +141,12 @@ function M.resolve_scope(buf, ft)
     if type(ft_scope) == "table" then
       base = vim.tbl_extend("force", base, ft_scope)
     end
+  end
+
+  if base.corners ~= nil then
+    base.corner = base.corners
+  elseif base.use_corners ~= nil then
+    base.corner = base.use_corners
   end
 
   local style_name = M.resolve_config(buf, "style", ft) or "thick"

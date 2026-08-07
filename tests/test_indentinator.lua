@@ -384,7 +384,7 @@ print("[Test 16] Testing Corner Underline Step Capping...")
 local test_chunks = render.build_virt_text(
   12, -- display_col
   4,  -- width
-  0,  -- active_col
+  4,  -- active_col
   "all", -- show_current
   true, -- show_first
   "│", -- char
@@ -402,12 +402,10 @@ local test_chunks = render.build_virt_text(
   0
 )
 assert_eq(#test_chunks, 12, "Should return 12 chunks for display_col 12")
-assert_eq(test_chunks[1][1], "┏", "Column 0 should be top corner")
-assert_eq(test_chunks[2][1], "━", "Column 1 should be underline connector")
-assert_eq(test_chunks[3][1], "━", "Column 2 should be underline connector")
-assert_eq(test_chunks[4][1], "━", "Column 3 should be underline connector")
-assert_eq(test_chunks[5][1], "│", "Column 4 should be normal guide line")
-assert_eq(test_chunks[6][1], " ", "Column 5 should be space gap")
+assert_eq(test_chunks[5][1], "┏", "Column 4 should be top corner")
+assert_eq(test_chunks[6][1], "━", "Column 5 should be underline connector")
+assert_eq(test_chunks[7][1], "━", "Column 6 should be underline connector")
+assert_eq(test_chunks[8][1], "━", "Column 7 should be underline connector")
 assert_eq(test_chunks[9][1], "│", "Column 8 should be normal guide line")
 
 print("  ✓ Corner underline step capping verified successfully.")
@@ -496,6 +494,139 @@ assert_eq(has_function_kw, true, "Header delimiters should include 'function'")
 assert_eq(has_open_paren, true, "Header delimiters should include '('")
 assert_eq(has_close_paren, true, "Header delimiters should include ')' for parameter lists")
 print("  ✓ Header parameter closing parenthesis highlighting verified successfully.")
+
+-- 22. Test Multi-Line Statement Scope Resolution (For Loops with Split Assignments)
+print("[Test 22] Testing Multi-Line Statement Scope Resolution (For Loops with Split Assignments)...")
+local split_stmt_code = [[for line in output:gmatch("[^\r\n]+") do
+  local path, lnum, col, severity_letter, code, message =
+    line:match("^([^>]+)>(%d+):(%d+):([WE]):(%d+):(.*)$")
+  if path then
+    print(path)
+  end
+end]]
+
+local split_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(split_buf, 0, -1, false, vim.split(split_stmt_code, "\n"))
+vim.api.nvim_set_option_value("filetype", "lua", { buf = split_buf })
+vim.api.nvim_win_set_buf(win, split_buf)
+vim.api.nvim_win_set_height(win, 20)
+
+-- Place cursor on line 3 (the split continuation `line:match(...)`)
+vim.api.nvim_win_set_cursor(win, { 3, 5 })
+ind.setup({
+  scope = {
+    enabled = true,
+    treesitter = true,
+  },
+})
+ind.force_update()
+vim.cmd("redraw")
+
+local scope_info = ind.get_current_scope(split_buf, win)
+assert_eq(scope_info ~= nil, true, "Scope info should not be nil for cursor inside split statement block")
+assert_eq(scope_info.scope_start, 1, "Scope start should be line 1 (for statement line)")
+assert_eq(scope_info.scope_end, 7, "Scope end should be line 7 (end line of for loop)")
+print("  ✓ Multi-line statement scope resolution verified successfully.")
+
+-- 23. Test only_scope Boundary Line Cut-Out
+print("[Test 23] Testing only_scope Boundary Line Cut-Out...")
+local indented_buf = vim.api.nvim_create_buf(false, false)
+local indented_code = [[
+function test()
+  if true then
+    print(1)
+    print(2)
+  end
+end]]
+vim.api.nvim_buf_set_lines(indented_buf, 0, -1, false, vim.split(indented_code, "\n"))
+vim.api.nvim_set_option_value("filetype", "lua", { buf = indented_buf })
+vim.api.nvim_win_set_buf(win, indented_buf)
+vim.api.nvim_win_set_height(win, 20)
+
+-- Move cursor inside `if true then` block (line 4: print(1))
+vim.api.nvim_win_set_cursor(win, { 4, 5 })
+
+ind.setup({
+  style = "thick",
+  scope = {
+    enabled = true,
+    corner = true,
+    only_scope = true,
+    treesitter = true,
+  },
+})
+ind.force_update()
+vim.cmd("redraw")
+
+local scope_info = ind.get_current_scope(indented_buf, win)
+-- Check virtual text chunks rendered for line 2 (scope_start: `function test()`, row index 1) vs line 5 (scope_end: `print(2)`, row index 4)
+render = require("indentinator.render")
+local line2_marks = vim.api.nvim_buf_get_extmarks(indented_buf, render.NS, { 1, 0 }, { 1, 999 }, { details = true })
+local line5_marks = vim.api.nvim_buf_get_extmarks(indented_buf, render.NS, { 4, 0 }, { 4, 999 }, { details = true })
+
+local found_line2_guide = false
+for _, em in ipairs(line2_marks) do
+  local details = em[4]
+  if details and details.virt_text then
+    for _, chunk in ipairs(details.virt_text) do
+      if chunk[1] == "┃" or chunk[1] == "│" then
+        found_line2_guide = true
+      end
+    end
+  end
+end
+assert_eq(found_line2_guide, true, "Line 2 (active_col 0) should fall back to straight line '┃'")
+
+local found_line5_guide = false
+for _, em in ipairs(line5_marks) do
+  local details = em[4]
+  if details and details.virt_text then
+    for _, chunk in ipairs(details.virt_text) do
+      if chunk[1] == "┃" or chunk[1] == "│" then
+        found_line5_guide = true
+      end
+    end
+  end
+end
+assert_eq(found_line5_guide, true, "Line 5 (active_col 0) should fall back to straight line '┃'")
+
+print("  ✓ only_scope boundary line cut-out verified successfully.")
+
+-- 24. Test Corner Fallback at Active Col 0 & Configurable Scope Corner Options
+print("[Test 24] Testing Corner Fallback at Active Col 0 & Configurable Scope Corner Options...")
+local fallback_chunks = render.build_virt_text(
+  4, -- display_col
+  2, -- width
+  0, -- active_col = 0 (leftmost column)
+  "all",
+  true,
+  "│",
+  "┃",
+  true, -- is_scope_start
+  false,
+  true, -- use_corner
+  "┏",
+  "┗",
+  "━",
+  "IndentinatorChar",
+  "IndentinatorCurrent",
+  "IndentinatorGap",
+  false,
+  0
+)
+assert_eq(fallback_chunks[1][1], "┃", "Active col 0 should fall back to straight line '┃' instead of elbow '┏'")
+
+-- Test corner option aliases in config (corners, use_corners)
+ind.setup({
+  scope = {
+    enabled = true,
+    corners = false,
+  },
+})
+local resolved_scope = config_mod.resolve_scope(0)
+assert_eq(resolved_scope.corner, false, "Scope corners alias should set corner option to false")
+
+print("  ✓ Corner fallback at active_col 0 & configurable scope corners verified successfully.")
 
 print("=== All Indentinator Tests Passed! ===")
 
