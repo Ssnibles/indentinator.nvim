@@ -131,6 +131,7 @@ M.BODY_CONTAINER_TYPES = {
   rule_set = true,
   media_statement = true,
   keyframes_statement = true,
+  supports_statement = true,
   element = true,
   script_element = true,
   style_element = true,
@@ -142,6 +143,70 @@ M.BODY_CONTAINER_TYPES = {
   ui_object_initializer = true,
   object_definition = true,
   component = true,
+  jsx_element = true,
+  jsx_fragment = true,
+  jsx_self_closing_element = true,
+  jsx_expression = true,
+  arrow_function = true,
+  function_expression = true,
+  closure_expression = true,
+  func_literal = true,
+  with_statement = true,
+  async_with_statement = true,
+  try_statement = true,
+  match_statement = true,
+  match_expression = true,
+  impl_item = true,
+  trait_item = true,
+  mod_item = true,
+  struct_item = true,
+  enum_item = true,
+  select_statement = true,
+  type_switch_statement = true,
+  expression_switch_statement = true,
+  namespace_definition = true,
+  linkage_specification = true,
+  anonymous_function = true,
+  attrset_expression = true,
+  rec_attrset_expression = true,
+  let_expression = true,
+  Block = true,
+  InitList = true,
+  SwitchExpr = true,
+  SwitchProng = true,
+}
+
+--- AST parent header construct node types
+M.HEADER_CONTAINER_TYPES = {
+  function_declaration = true,
+  function_definition = true,
+  arrow_function = true,
+  function_expression = true,
+  method_definition = true,
+  generator_function = true,
+  async_function_definition = true,
+  class_declaration = true,
+  class_definition = true,
+  interface_declaration = true,
+  enum_declaration = true,
+  if_statement = true,
+  for_statement = true,
+  while_statement = true,
+  do_statement = true,
+  try_statement = true,
+  switch_statement = true,
+  match_statement = true,
+  match_expression = true,
+  impl_item = true,
+  trait_item = true,
+  lexical_declaration = true,
+  variable_declaration = true,
+  jsx_element = true,
+  with_statement = true,
+  async_with_statement = true,
+  select_statement = true,
+  namespace_definition = true,
+  linkage_specification = true,
 }
 
 --- AST clause container types
@@ -492,14 +557,17 @@ function M.get_treesitter_scope_range(buf, win, width, tabstop)
 
   local header_node = nil
   local parent_node = scope_node:parent()
-  if parent_node then
+  while parent_node do
     local p_type = parent_node:type()
-    if not M.ROOT_AST_TYPES[p_type] and not M.IGNORE_AST_TYPES[p_type] then
+    if M.ROOT_AST_TYPES[p_type] then break end
+    if M.HEADER_CONTAINER_TYPES[p_type] or not M.IGNORE_AST_TYPES[p_type] then
       local p_s, _, p_e, _ = parent_node:range()
       if p_s < p_e then
         header_node = parent_node
+        break
       end
     end
+    parent_node = parent_node:parent()
   end
 
   local full_node = header_node or scope_node
@@ -513,7 +581,7 @@ function M.get_treesitter_scope_range(buf, win, width, tabstop)
   if ok_l and lines and lines[1] then
     local lead = lines[1]:match("^%s*")
     local hdr_indent = utils.lead_display_width(lead or "", tabstop)
-    active_col = math.max(0, hdr_indent - (width or 2))
+    active_col = hdr_indent
   end
 
   return scope_start, scope_end, active_col, scope_node

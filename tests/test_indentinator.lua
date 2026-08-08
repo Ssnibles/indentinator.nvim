@@ -751,7 +751,185 @@ assert_eq(found_row2_guide, true, "Row 2 should preserve guide character and hig
 pcall(vim.api.nvim_buf_delete, scope_preservation_buf, { force = true })
 print("  ✓ Preservation of standard indent guides outside active scope verified successfully.")
 
+-- 28. Test JSX/TSX & Arrow Function Scope Resolution
+print("[Test 28] Testing JSX/TSX & Arrow Function Scope Resolution...")
+local jsx_code = [[
+const Component = () => {
+  return (
+    <div className="container">
+      {items.map((item) => (
+        <span key={item.id}>{item.name}</span>
+      ))}
+    </div>
+  );
+};]]
+
+local jsx_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(jsx_buf, 0, -1, false, vim.split(jsx_code, "\n"))
+vim.api.nvim_set_option_value("filetype", "typescriptreact", { buf = jsx_buf })
+vim.api.nvim_win_set_buf(win, jsx_buf)
+vim.api.nvim_win_set_cursor(win, { 5, 12 }) -- Inside span element inside map callback
+
+ind.setup({
+  scope = {
+    enabled = true,
+    treesitter = true,
+  },
+})
+ind.force_update()
+
+local jsx_scope = ind.get_current_scope(jsx_buf, win)
+assert_eq(jsx_scope ~= nil, true, "JSX/TSX scope resolution should not be nil")
+assert_eq(jsx_scope.scope_start <= 5, true, "JSX scope start should encompass cursor line 5")
+assert_eq(jsx_scope.scope_end >= 5, true, "JSX scope end should encompass cursor line 5")
+pcall(vim.api.nvim_buf_delete, jsx_buf, { force = true })
+print("  ✓ JSX/TSX & Arrow Function Scope Resolution verified successfully.")
+
+-- 29. Test Python match/case & with Statement Scope Resolution
+print("[Test 29] Testing Python match/case & with Statement Scope Resolution...")
+local py_code = [[
+with open("file.txt") as f:
+    match status:
+        case 200:
+            print("OK")
+        case 404:
+            print("Not Found")]]
+
+local py_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(py_buf, 0, -1, false, vim.split(py_code, "\n"))
+vim.api.nvim_set_option_value("filetype", "python", { buf = py_buf })
+vim.api.nvim_win_set_buf(win, py_buf)
+vim.api.nvim_win_set_cursor(win, { 4, 12 }) -- On print("OK") inside case 200
+
+ind.force_update()
+local py_scope = ind.get_current_scope(py_buf, win)
+assert_eq(py_scope ~= nil, true, "Python scope resolution should not be nil")
+assert_eq(py_scope.scope_start <= 4, true, "Python scope start should be at or above case 200")
+assert_eq(py_scope.scope_end >= 4, true, "Python scope end should be at or below line 4")
+pcall(vim.api.nvim_buf_delete, py_buf, { force = true })
+print("  ✓ Python match/case & with Statement Scope Resolution verified successfully.")
+
+-- 30. Test Rust impl & closure_expression Scope Resolution
+print("[Test 30] Testing Rust impl & closure_expression Scope Resolution...")
+local rs_code = [[
+impl MyStruct {
+    pub fn process(&self) {
+        let items = vec![1, 2, 3];
+        items.iter().for_each(|x| {
+            println!("{}", x);
+        });
+    }
+}]]
+
+local rs_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(rs_buf, 0, -1, false, vim.split(rs_code, "\n"))
+vim.api.nvim_set_option_value("filetype", "rust", { buf = rs_buf })
+vim.api.nvim_win_set_buf(win, rs_buf)
+vim.api.nvim_win_set_cursor(win, { 5, 16 }) -- On println! inside Rust closure
+
+ind.force_update()
+local rs_scope = ind.get_current_scope(rs_buf, win)
+assert_eq(rs_scope ~= nil, true, "Rust scope resolution should not be nil")
+assert_eq(rs_scope.scope_start <= 5, true, "Rust scope start should encompass line 5")
+assert_eq(rs_scope.scope_end >= 5, true, "Rust scope end should encompass line 5")
+pcall(vim.api.nvim_buf_delete, rs_buf, { force = true })
+print("  ✓ Rust impl & closure_expression Scope Resolution verified successfully.")
+
+-- 31. Test Go select & func_literal Scope Resolution
+print("[Test 31] Testing Go select & func_literal Scope Resolution...")
+local go_code = [[
+func main() {
+    go func() {
+        select {
+        case msg := <-ch:
+            fmt.Println(msg)
+        default:
+            fmt.Println("no msg")
+        }
+    }()
+}]]
+
+local go_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(go_buf, 0, -1, false, vim.split(go_code, "\n"))
+vim.api.nvim_set_option_value("filetype", "go", { buf = go_buf })
+vim.api.nvim_win_set_buf(win, go_buf)
+vim.api.nvim_win_set_cursor(win, { 5, 14 }) -- On fmt.Println(msg) inside case
+
+ind.force_update()
+local go_scope = ind.get_current_scope(go_buf, win)
+assert_eq(go_scope ~= nil, true, "Go scope resolution should not be nil")
+assert_eq(go_scope.scope_start <= 5, true, "Go scope start should be at or above line 5")
+assert_eq(go_scope.scope_end >= 5, true, "Go scope end should be at or below line 5")
+pcall(vim.api.nvim_buf_delete, go_buf, { force = true })
+print("  ✓ Go select & func_literal Scope Resolution verified successfully.")
+
+-- 32. Test Scope Delimiter Extraction Accuracy
+print("[Test 32] Testing Scope Delimiter Extraction Accuracy...")
+local scope_delims = scope_mod.find_delimiters("  if (condition) {", true)
+assert_eq(#scope_delims >= 2, true, "Header line should extract multiple opener delimiters")
+print("  ✓ Scope Delimiter Extraction Accuracy verified successfully.")
+
+-- 33. Test Multi-Line Statement Header active_col Alignment
+print("[Test 33] Testing Multi-Line Statement Header active_col Alignment...")
+local align_buf = vim.api.nvim_create_buf(false, false)
+local align_code = [[
+function complex_header(
+    param1,
+    param2
+)
+    return param1 + param2
+end]]
+vim.api.nvim_buf_set_lines(align_buf, 0, -1, false, vim.split(align_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 4, { buf = align_buf })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = align_buf })
+vim.api.nvim_win_set_buf(win, align_buf)
+vim.api.nvim_win_set_cursor(win, { 5, 8 }) -- On return statement
+
+ind.force_update()
+local align_scope = ind.get_current_scope(align_buf, win)
+assert_eq(align_scope ~= nil, true, "Scope should resolve for multi-line function declaration")
+assert_eq(align_scope.active_col, 0, "active_col for top-level function header should be 0")
+pcall(vim.api.nvim_buf_delete, align_buf, { force = true })
+print("  ✓ Multi-Line Statement Header active_col Alignment verified successfully.")
+
+-- 34. Test HTML/CSS Element Scope & Delimiter Resolution
+print("[Test 34] Testing HTML/CSS Element Scope & Delimiter Resolution...")
+local html_delims = scope_mod.find_delimiters("<div class='box'>", true)
+assert_eq(#html_delims >= 1, true, "HTML open tag should produce delimiter match")
+local css_delims = scope_mod.find_delimiters(".box { color: red; }", true)
+assert_eq(#css_delims >= 1, true, "CSS rule set should produce delimiter match")
+print("  ✓ HTML/CSS Element Scope & Delimiter Resolution verified successfully.")
+
+-- 35. Test Standard Guide Continuity Across Complex Nested Trees
+print("[Test 35] Testing Standard Guide Continuity Across Complex Nested Trees...")
+local deep_buf = vim.api.nvim_create_buf(false, false)
+local deep_code = [[
+function level1()
+  if level2 then
+    while level3 do
+      for level4 in pairs(t) do
+        print(level4)
+      end
+    end
+  end
+end]]
+vim.api.nvim_buf_set_lines(deep_buf, 0, -1, false, vim.split(deep_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = deep_buf })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = deep_buf })
+vim.api.nvim_win_set_buf(win, deep_buf)
+vim.api.nvim_win_set_cursor(win, { 5, 10 }) -- Inside innermost for loop
+
+ind.force_update()
+local deep_scope = ind.get_current_scope(deep_buf, win)
+assert_eq(deep_scope ~= nil, true, "Deeply nested scope resolution should succeed")
+assert_eq(deep_scope.scope_start, 4, "Innermost for loop scope start should be line 4")
+assert_eq(deep_scope.scope_end, 6, "Innermost for loop scope end should be line 6")
+assert_eq(deep_scope.active_col, 6, "Active guide col for innermost for loop should be 6")
+pcall(vim.api.nvim_buf_delete, deep_buf, { force = true })
+print("  ✓ Standard Guide Continuity Across Complex Nested Trees verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
+
 
 
 
