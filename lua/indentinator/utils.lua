@@ -19,6 +19,9 @@ local M = {}
 ---@param opt string Option name (e.g. "shiftwidth", "tabstop")
 ---@return integer|nil The numeric option value or nil if invalid
 function M.get_buf_opt(buf, opt)
+  if not buf or not api.nvim_buf_is_valid(buf) then
+    return nil
+  end
   local ok, val = pcall(nvim_get_option_value, opt, { buf = buf })
   if ok and type(val) == "number" and val > 0 then
     return val
@@ -79,6 +82,10 @@ end
 ---@return string|nil lead Leading whitespace string
 ---@return integer|nil row Line row index (1-indexed)
 function M.find_non_blank_up(buf, start_row)
+  if not buf or not api.nvim_buf_is_valid(buf) then
+    return nil
+  end
+
   local chunk_size = 100
   local current = start_row
   local min_allowed = math.max(1, start_row - MAX_SEARCH_DEPTH)
@@ -111,6 +118,10 @@ end
 ---@return string|nil lead Leading whitespace string
 ---@return integer|nil row Line row index (1-indexed)
 function M.find_non_blank_down(buf, start_row, line_count)
+  if not buf or not api.nvim_buf_is_valid(buf) then
+    return nil
+  end
+
   local chunk_size = 100
   local current = start_row
   local max_allowed = math.min(line_count, start_row + MAX_SEARCH_DEPTH)
@@ -167,13 +178,20 @@ end
 ---@param win integer The window handle
 ---@return integer|nil Active guide column index, or nil if inactive
 function M.get_current_indent_col(buf, win)
+  if not buf or not win or not api.nvim_buf_is_valid(buf) or not api.nvim_win_is_valid(win) then
+    return nil
+  end
+
   local line_count = nvim_buf_line_count(buf)
   if line_count == 0 then
     return nil
   end
 
-  local cursor = nvim_win_get_cursor(win)
-  local target_row = cursor[1]
+  local ok_cursor, cursor = pcall(nvim_win_get_cursor, win)
+  if not ok_cursor or not cursor then
+    return nil
+  end
+  local target_row = math.min(math.max(1, cursor[1]), line_count)
 
   local ok_lines, lines = pcall(nvim_buf_get_lines, buf, target_row - 1, target_row, false)
   if not ok_lines or #lines == 0 then

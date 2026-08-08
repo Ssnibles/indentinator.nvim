@@ -167,6 +167,9 @@ M.values = vim.deepcopy(M.defaults)
 ---@param buf integer Buffer handle
 ---@return string Filetype string or empty string if unset
 local function get_filetype(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return ""
+  end
   local ok, ft = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
   return (ok and type(ft) == "string") and ft or ""
 end
@@ -246,6 +249,9 @@ end
 ---@param state IndentinatorStateData|nil Optional state module reference
 ---@return boolean True if guides should be rendered for this buffer, false otherwise
 function M.is_enabled(buf, state)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return false
+  end
   state = state or require("indentinator.state").state
 
   -- Respect explicit buffer override state if set
@@ -265,20 +271,24 @@ function M.is_enabled(buf, state)
 
   -- Check excluded filetypes
   local ft = get_filetype(buf)
-  local excluded_fts = M.resolve_config(buf, "exclude", ft) or {}
-  for _, excluded_ft in ipairs(excluded_fts) do
-    if ft == excluded_ft then
-      return false
+  local excluded_fts = M.resolve_config(buf, "exclude", ft)
+  if type(excluded_fts) == "table" then
+    for _, excluded_ft in ipairs(excluded_fts) do
+      if ft == excluded_ft then
+        return false
+      end
     end
   end
 
   -- Check excluded buftypes
   local ok_bt, bt = pcall(vim.api.nvim_get_option_value, "buftype", { buf = buf })
   bt = (ok_bt and type(bt) == "string") and bt or ""
-  local excluded_bts = M.resolve_config(buf, "exclude_buftypes", ft) or {}
-  for _, excluded_bt in ipairs(excluded_bts) do
-    if bt == excluded_bt then
-      return false
+  local excluded_bts = M.resolve_config(buf, "exclude_buftypes", ft)
+  if type(excluded_bts) == "table" then
+    for _, excluded_bt in ipairs(excluded_bts) do
+      if bt == excluded_bt then
+        return false
+      end
     end
   end
 

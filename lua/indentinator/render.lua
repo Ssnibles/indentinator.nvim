@@ -207,6 +207,8 @@ local function render_delimiters(buf, line_idx, delims, delim_hl, priority)
   end
 end
 
+local uv = vim.uv or vim.loop
+
 --- Calculates blank line display column values for empty line blocks.
 ---@param lines string[] Array of visible line texts
 ---@param results table<integer, integer> Map of line index to display col
@@ -215,6 +217,10 @@ end
 ---@param r0 integer Top visible line row (1-indexed)
 ---@param tabstop integer Buffer tabstop width
 local function process_blank_lines(lines, results, line_widths, buf, r0, tabstop)
+  if not buf or not nvim_buf_is_valid(buf) then
+    return
+  end
+
   local k = 1
   local nlines = #lines
   local line_count = nvim_buf_line_count(buf)
@@ -530,7 +536,7 @@ function M.attach(buf)
     if timer and not timer:is_closing() then
       timer:stop()
     else
-      timer = (vim.uv or vim.loop).new_timer()
+      timer = uv.new_timer()
       state.timers[buf] = timer
     end
 

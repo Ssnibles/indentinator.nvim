@@ -367,10 +367,16 @@ end
 ---@return integer|nil scope_start (1-indexed)
 ---@return integer|nil scope_end (1-indexed)
 function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
+  if not buf or not api.nvim_buf_is_valid(buf) then
+    return nil, nil
+  end
+
   local line_count = nvim_buf_line_count(buf)
   if line_count == 0 or not active_col then
     return nil, nil
   end
+
+  cursor_row = math.min(math.max(1, cursor_row or 1), line_count)
 
   local limit = active_col + width
   local scope_start = search_scope_start(buf, cursor_row, active_col, limit, tabstop)
@@ -441,6 +447,10 @@ end
 ---@return integer|nil active_col
 ---@return userdata|nil scope_node
 function M.get_treesitter_scope_range(buf, win, width, tabstop)
+  if not buf or not win or not api.nvim_buf_is_valid(buf) or not api.nvim_win_is_valid(win) then
+    return nil, nil, nil, nil
+  end
+
   if not vim.treesitter or not vim.treesitter.get_parser then
     return nil, nil, nil, nil
   end

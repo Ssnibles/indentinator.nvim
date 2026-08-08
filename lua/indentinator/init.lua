@@ -327,8 +327,16 @@ end
 ---@return table|nil Scope details `{ scope_start, scope_end, active_col }` or nil
 function M.get_current_scope(buf, win)
   win = win or nvim_get_current_win()
-  buf = buf or nvim_win_get_buf(win)
-  if not buf or not win or not nvim_buf_is_loaded(buf) then
+  if not win or not nvim_win_is_valid(win) then
+    return nil
+  end
+
+  if not buf then
+    local ok_b, b = pcall(nvim_win_get_buf, win)
+    buf = ok_b and b or nil
+  end
+
+  if not buf or not nvim_buf_is_valid(buf) or not nvim_buf_is_loaded(buf) then
     return nil
   end
 
@@ -364,10 +372,13 @@ function M.get_current_scope(buf, win)
 end
 
 --- Jumps cursor to start ("top") or end ("bottom") of active scope block.
----@param where "top"|"bottom"|"end" Target boundary
+---@param where "top"|"bottom"|"end"|nil Target boundary
 function M.jump_to_scope(where)
   where = where or "top"
   local win = nvim_get_current_win()
+  if not nvim_win_is_valid(win) then
+    return
+  end
   local scope_info = M.get_current_scope(nil, win)
   if not scope_info then
     return
