@@ -299,15 +299,30 @@ M.CLOSE_DELIMITER_TYPES = {
   ["elsif"] = true, ["until"] = true, ["/>"] = true, ["</"] = true,
 }
 
+local FT_OPEN_KEYWORDS = {
+  lua = { "function", "if", "elseif", "else", "for", "while", "repeat", "until", "do", "then" },
+  python = { "def", "class", "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "match", "case", "async" },
+  rust = { "fn", "impl", "struct", "enum", "union", "trait", "mod", "if", "else", "for", "while", "loop", "match", "async", "unsafe" },
+  go = { "func", "type", "struct", "interface", "if", "else", "for", "switch", "case", "select" },
+  c = { "if", "else", "for", "while", "do", "switch", "case", "struct", "union", "enum" },
+  cpp = { "if", "else", "for", "while", "do", "switch", "case", "struct", "union", "enum", "class", "namespace", "template", "try", "catch" },
+  javascript = { "function", "class", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
+  typescript = { "function", "class", "interface", "type", "enum", "namespace", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
+  typescriptreact = { "function", "class", "interface", "type", "enum", "namespace", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
+  javascriptreact = { "function", "class", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
+  ruby = { "def", "class", "module", "if", "elsif", "else", "unless", "while", "until", "for", "do", "begin", "rescue", "ensure", "case", "when" },
+  sh = { "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "case", "esac", "function" },
+  bash = { "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "case", "esac", "function" },
+  zsh = { "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "case", "esac", "function" },
+}
+
 local OPEN_KEYWORDS = {
   "for", "foreach", "while", "if", "elseif", "elif", "elsif", "else", "repeat", "until",
   "do", "then", "begin", "function", "func", "fn", "fun", "def", "defp", "defmodule",
   "defmacro", "defprotocol", "defimpl", "class", "struct", "enum", "union", "interface",
   "trait", "impl", "module", "namespace", "package", "type", "switch", "case", "select",
   "try", "catch", "except", "finally", "rescue", "ensure", "unless", "with", "where",
-  "loop", "match", "defer", "go", "pub", "public", "private", "protected", "static",
-  "async", "unsafe", "override", "default", "when", "of", "guard", "proc", "method",
-  "iterator", "macro", "template", "concept", "record", "cond", "receive", "test"
+  "loop", "match"
 }
 
 local CLOSE_KEYWORDS = {
@@ -315,7 +330,7 @@ local CLOSE_KEYWORDS = {
   "endfor", "endforeach", "endwhile", "endswitch", "enddeclare"
 }
 
-local OPEN_CHARS = { ["{"] = true, ["["] = true, ["("] = true, [")"] = true, ["]"] = true, ["}"] = true }
+local OPEN_CHARS = { ["{"] = true, ["["] = true, ["("] = true }
 local CLOSE_CHARS = { ["}"] = true, ["]"] = true, [")"] = true }
 
 --- Traverses upward from cursor row to find scope start row.
@@ -642,7 +657,15 @@ local function collect_leaf_delimiters(node, target_row, valid_types, matches, v
   local child_count = node:child_count()
   if child_count == 0 then
     if s_row == target_row and e_row == target_row and valid_types[type_name] then
-      table.insert(matches, { s_col, e_col })
+      local parent = node:parent()
+      local parent_type = parent and parent:type() or ""
+      if parent_type ~= "parameters" and parent_type ~= "parameter"
+         and parent_type ~= "argument_list" and parent_type ~= "identifier"
+         and parent_type ~= "variable_declarator" and parent_type ~= "assignment_statement"
+         and type_name ~= "identifier" and type_name ~= "field_identifier"
+         and type_name ~= "property_identifier" then
+        table.insert(matches, { s_col, e_col })
+      end
     end
   else
     for i = 0, child_count - 1 do
@@ -664,20 +687,24 @@ function M.get_treesitter_delimiters(scope_node, target_row, is_start)
     return {}
   end
 
+  local target_node = scope_node
+  local parent = scope_node:parent()
+  while parent do
+    local p_type = parent:type()
+    if M.ROOT_AST_TYPES[p_type] then break end
+    local p_s, _, p_e, _ = parent:range()
+    if p_s <= target_row and p_e >= target_row then
+      target_node = parent
+      break
+    end
+    parent = parent:parent()
+  end
+
   local raw_matches = {}
   local valid_types = is_start and M.OPEN_DELIMITER_TYPES or M.CLOSE_DELIMITER_TYPES
   local visited = {}
 
-  local curr_anc = scope_node
-  while curr_anc do
-    local a_s_row = curr_anc:range()
-    if a_s_row == target_row then
-      collect_leaf_delimiters(curr_anc, target_row, valid_types, raw_matches, visited)
-      curr_anc = curr_anc:parent()
-    else
-      break
-    end
-  end
+  collect_leaf_delimiters(target_node, target_row, valid_types, raw_matches, visited)
 
   local unique = {}
   local matches = {}
@@ -728,7 +755,10 @@ function M.find_delimiters(line_text, is_start, ft)
   end
 
   local clean_text = sanitize_line(line_text, ft)
-  local keywords = is_start and OPEN_KEYWORDS or CLOSE_KEYWORDS
+  local keywords = CLOSE_KEYWORDS
+  if is_start then
+    keywords = (ft and FT_OPEN_KEYWORDS[ft]) or OPEN_KEYWORDS
+  end
   local char_map = is_start and OPEN_CHARS or CLOSE_CHARS
   local raw_matches = {}
 

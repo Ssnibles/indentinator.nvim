@@ -503,7 +503,7 @@ end
 
 assert_eq(has_function_kw, true, "Header delimiters should include 'function'")
 assert_eq(has_open_paren, true, "Header delimiters should include '('")
-assert_eq(has_close_paren, true, "Header delimiters should include ')' for parameter lists")
+assert_eq(has_close_paren, false, "Header delimiters on scope start should NOT include closing paren ')'")
 print("  ✓ Header parameter closing parenthesis highlighting verified successfully.")
 
 -- 22. Test Multi-Line Statement Scope Resolution (For Loops with Split Assignments)
@@ -1099,6 +1099,59 @@ for _, mod_name in ipairs(core_modules) do
   assert_eq(type(mod_obj), "table", "Module export is table: " .. mod_name)
 end
 print("  ✓ Core Module EmmyLua Annotations Integrity verified successfully.")
+
+-- 46. Test Exclusion of Intermediate Parameter Delimiters (pcall(fn, opts))
+print("[Test 46] Testing Exclusion of Intermediate Parameter Delimiters...")
+local pcall_line = "  local ok, err = pcall(fn, opts)"
+local pcall_delims = scope_mod.find_delimiters(pcall_line, true, "lua")
+local matched_fn_or_opts = false
+for _, d in ipairs(pcall_delims) do
+  local tok = pcall_line:sub(d[1] + 1, d[2])
+  if tok == "fn" or tok == "opts" or tok == "local" then
+    matched_fn_or_opts = true
+  end
+end
+assert_eq(matched_fn_or_opts, false, "pcall(fn, opts) line must NOT match 'fn', 'opts', or 'local' as delimiters")
+print("  ✓ Exclusion of Intermediate Parameter Delimiters verified successfully.")
+
+-- 47. Test Lua function(opts) Scope Delimiter Precision (IBL/mini.indentscope Standard)
+print("[Test 47] Testing Lua function(opts) Scope Delimiter Precision...")
+local fn_opts_code = [[
+local function cmd(fn)
+  return function(opts)
+    local ok, err = pcall(fn, opts)
+    if not ok then
+      vim.notify("err")
+    end
+  end
+end]]
+local fn_opts_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(fn_opts_buf, 0, -1, false, vim.split(fn_opts_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = fn_opts_buf })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = fn_opts_buf })
+vim.api.nvim_win_set_buf(win, fn_opts_buf)
+vim.api.nvim_win_set_cursor(win, { 5, 8 }) -- On vim.notify inside if block
+ind.force_update()
+local fn_opts_scope = ind.get_current_scope(fn_opts_buf, win)
+assert_eq(fn_opts_scope ~= nil, true, "Lua nested scope resolution should succeed")
+assert_eq(fn_opts_scope.scope_start <= 4, true, "if statement scope start line check")
+assert_eq(fn_opts_scope.scope_end >= 5, true, "if statement scope end line check")
+
+-- Verify delimiters extracted on if statement header line 4
+local if_hdr_str = "    if not ok then"
+local if_header_delims = scope_mod.find_delimiters(if_hdr_str, true, "lua")
+local has_if_kw = false
+local has_fn_kw = false
+for _, d in ipairs(if_header_delims) do
+  local tok = if_hdr_str:sub(d[1] + 1, d[2])
+  if tok == "if" or tok == "then" then has_if_kw = true end
+  if tok == "fn" or tok == "opts" then has_fn_kw = true end
+end
+assert_eq(has_if_kw, true, "if statement header must match 'if' or 'then'")
+assert_eq(has_fn_kw, false, "if statement header must NOT match 'fn' or 'opts'")
+
+pcall(vim.api.nvim_buf_delete, fn_opts_buf, { force = true })
+print("  ✓ Lua function(opts) Scope Delimiter Precision verified successfully.")
 
 print("=== All Indentinator Tests Passed! ===")
 
