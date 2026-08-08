@@ -14,6 +14,30 @@ local MAX_SEARCH_DEPTH = 2000
 
 local M = {}
 
+--- Retrieves line comment prefix patterns associated with a filetype.
+---@param ft string|nil Filetype string
+---@return string[] Array of comment prefix regex strings
+function M.get_comment_prefixes(ft)
+  if not ft or ft == "" then
+    return { "%-%-", "//", "#" }
+  end
+
+  if ft == "lua" or ft == "haskell" or ft == "sql" or ft == "ada" then
+    return { "%-%-" }
+  elseif ft == "python" or ft == "ruby" or ft == "sh" or ft == "bash" or ft == "zsh"
+      or ft == "elixir" or ft == "yaml" or ft == "toml" or ft == "r" or ft == "dockerfile"
+      or ft == "make" or ft == "julia" or ft == "nim" then
+    return { "#" }
+  elseif ft == "clojure" or ft == "lisp" or ft == "scheme" or ft == "asm" or ft == "ini" then
+    return { ";" }
+  elseif ft == "vim" then
+    return { '"' }
+  else
+    return { "//" }
+  end
+end
+
+
 --- Safely retrieves a positive numeric option value from a buffer.
 ---@param buf integer The buffer handle
 ---@param opt string Option name (e.g. "shiftwidth", "tabstop")

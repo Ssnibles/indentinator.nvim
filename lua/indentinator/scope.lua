@@ -146,6 +146,8 @@ M.BODY_CONTAINER_TYPES = {
   jsx_element = true,
   jsx_fragment = true,
   jsx_self_closing_element = true,
+  jsx_opening_element = true,
+  jsx_closing_element = true,
   jsx_expression = true,
   arrow_function = true,
   function_expression = true,
@@ -174,21 +176,42 @@ M.BODY_CONTAINER_TYPES = {
   InitList = true,
   SwitchExpr = true,
   SwitchProng = true,
+  async_block = true,
+  unsafe_block = true,
+  constructor_body = true,
+  lambda = true,
+  lambda_expression = true,
+  list_comprehension = true,
+  dictionary_comprehension = true,
+  set_comprehension = true,
+  generator_expression = true,
+  template_substitution = true,
 }
 
 --- AST parent header construct node types
 M.HEADER_CONTAINER_TYPES = {
   function_declaration = true,
   function_definition = true,
+  function_item = true,
   arrow_function = true,
   function_expression = true,
   method_definition = true,
+  method_declaration = true,
+  constructor_declaration = true,
   generator_function = true,
   async_function_definition = true,
   class_declaration = true,
   class_definition = true,
+  class_specifier = true,
+  class = true,
   interface_declaration = true,
   enum_declaration = true,
+  enum_specifier = true,
+  enum_item = true,
+  struct_specifier = true,
+  struct_item = true,
+  union_specifier = true,
+  union_item = true,
   if_statement = true,
   for_statement = true,
   while_statement = true,
@@ -199,14 +222,25 @@ M.HEADER_CONTAINER_TYPES = {
   match_expression = true,
   impl_item = true,
   trait_item = true,
+  trait_declaration = true,
+  mod_item = true,
+  module = true,
+  type_declaration = true,
+  type_spec = true,
+  template_declaration = true,
   lexical_declaration = true,
   variable_declaration = true,
   jsx_element = true,
+  function_component = true,
   with_statement = true,
   async_with_statement = true,
   select_statement = true,
   namespace_definition = true,
   linkage_specification = true,
+  method = true,
+  singleton_method = true,
+  fn_proto = true,
+  FnProto = true,
 }
 
 --- AST clause container types
@@ -225,7 +259,6 @@ M.CLAUSE_CONTAINER_TYPES = {
 --- AST delimiter node types for scope openers
 M.OPEN_DELIMITER_TYPES = {
   ["{"] = true, ["("] = true, ["["] = true, [":"] = true,
-  [")"] = true, ["]"] = true, ["}"] = true,
   ["<"] = true, ["<?php"] = true, ["<?"] = true,
   ["do"] = true, ["then"] = true, ["begin"] = true, ["function"] = true,
   ["func"] = true, ["fn"] = true, ["fun"] = true, ["def"] = true, ["defp"] = true,
@@ -660,10 +693,11 @@ function M.get_treesitter_delimiters(scope_node, target_row, is_start)
   return matches
 end
 
---- Sanitizes line text by masking string literals and stripping comments.
+--- Sanitizes line text by masking string literals and stripping comments based on filetype.
 ---@param line_text string Raw line text
+---@param ft string|nil Filetype string
 ---@return string Sanitized line text
-local function sanitize_line(line_text)
+local function sanitize_line(line_text, ft)
   if not line_text or line_text == "" then
     return ""
   end
@@ -672,9 +706,13 @@ local function sanitize_line(line_text)
   clean = clean:gsub('"[^"]*"', function(m) return string.rep(" ", #m) end)
   clean = clean:gsub("'[^']*'", function(m) return string.rep(" ", #m) end)
   clean = clean:gsub("`[^`]*`", function(m) return string.rep(" ", #m) end)
-  clean = clean:gsub("%-%-.*$", ""):gsub("//.*$", ""):gsub("#.*$", "")
   clean = clean:gsub("/%*.-%*/", function(m) return string.rep(" ", #m) end)
   clean = clean:gsub("<!%-%-.-%-%->", function(m) return string.rep(" ", #m) end)
+
+  local prefixes = utils.get_comment_prefixes(ft)
+  for _, prefix in ipairs(prefixes) do
+    clean = clean:gsub(prefix .. ".*$", "")
+  end
 
   return clean
 end
@@ -682,13 +720,14 @@ end
 --- Finds delimiter byte ranges on line_text using regex pattern matching.
 ---@param line_text string Raw line text
 ---@param is_start boolean True for start line, false for end line
+---@param ft string|nil Optional filetype string for comment sanitization
 ---@return integer[][] List of { s_col, e_col }
-function M.find_delimiters(line_text, is_start)
+function M.find_delimiters(line_text, is_start, ft)
   if not line_text or line_text == "" then
     return {}
   end
 
-  local clean_text = sanitize_line(line_text)
+  local clean_text = sanitize_line(line_text, ft)
   local keywords = is_start and OPEN_KEYWORDS or CLOSE_KEYWORDS
   local char_map = is_start and OPEN_CHARS or CLOSE_CHARS
   local raw_matches = {}

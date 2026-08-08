@@ -410,7 +410,7 @@ function M.render(buf, win, skip_clear)
           delims = scope.get_treesitter_delimiters(scope_node, line_idx, is_this_scope_start)
         end
         if not delims or #delims == 0 then
-          delims = scope.find_delimiters(lines[k], is_this_scope_start)
+          delims = scope.find_delimiters(lines[k], is_this_scope_start, ft)
         end
         render_delimiters(buf, line_idx, delims, delim_hl, priority)
       end

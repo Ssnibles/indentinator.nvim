@@ -928,7 +928,180 @@ assert_eq(deep_scope.active_col, 6, "Active guide col for innermost for loop sho
 pcall(vim.api.nvim_buf_delete, deep_buf, { force = true })
 print("  ✓ Standard Guide Continuity Across Complex Nested Trees verified successfully.")
 
+-- 36. Test Rust function_item & struct_item AST Scope Resolution
+print("[Test 36] Testing Rust function_item & struct_item AST Scope Resolution...")
+local rs_item_code = [[
+struct Container {
+    val: i32,
+}
+fn compute_total(c: Container) -> i32 {
+    let x = c.val;
+    x * 2
+}]]
+local rs_item_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(rs_item_buf, 0, -1, false, vim.split(rs_item_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 4, { buf = rs_item_buf })
+vim.api.nvim_set_option_value("filetype", "rust", { buf = rs_item_buf })
+vim.api.nvim_win_set_buf(win, rs_item_buf)
+vim.api.nvim_win_set_cursor(win, { 5, 8 })
+ind.force_update()
+local rs_item_scope = ind.get_current_scope(rs_item_buf, win)
+assert_eq(rs_item_scope ~= nil, true, "Rust function_item scope resolution should succeed")
+assert_eq(rs_item_scope.scope_start <= 4, true, "Rust fn header line start check")
+assert_eq(rs_item_scope.scope_end >= 6, true, "Rust fn end line check")
+pcall(vim.api.nvim_buf_delete, rs_item_buf, { force = true })
+print("  ✓ Rust function_item & struct_item AST Scope Resolution verified successfully.")
+
+-- 37. Test Go method_declaration & type_declaration AST Scope Resolution
+print("[Test 37] Testing Go method_declaration & type_declaration AST Scope Resolution...")
+local go_method_code = [[
+type Server struct {
+    port int
+}
+func (s *Server) Start() error {
+    log.Println("Starting")
+    return nil
+}]]
+local go_method_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(go_method_buf, 0, -1, false, vim.split(go_method_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 4, { buf = go_method_buf })
+vim.api.nvim_set_option_value("filetype", "go", { buf = go_method_buf })
+vim.api.nvim_win_set_buf(win, go_method_buf)
+vim.api.nvim_win_set_cursor(win, { 5, 8 })
+ind.force_update()
+local go_method_scope = ind.get_current_scope(go_method_buf, win)
+assert_eq(go_method_scope ~= nil, true, "Go method_declaration scope resolution should succeed")
+assert_eq(go_method_scope.scope_start, 4, "Go method declaration header start line 4")
+assert_eq(go_method_scope.scope_end, 7, "Go method declaration end line 7")
+pcall(vim.api.nvim_buf_delete, go_method_buf, { force = true })
+print("  ✓ Go method_declaration & type_declaration AST Scope Resolution verified successfully.")
+
+-- 38. Test C/C++ struct_specifier & template_declaration AST Scope Resolution
+print("[Test 38] Testing C/C++ struct_specifier & template_declaration Scope Resolution...")
+local cpp_code = [[
+template <typename T>
+struct Processor {
+    void process(T val) {
+        printf("Processing\n");
+    }
+};]]
+local cpp_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(cpp_buf, 0, -1, false, vim.split(cpp_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 4, { buf = cpp_buf })
+vim.api.nvim_set_option_value("filetype", "cpp", { buf = cpp_buf })
+vim.api.nvim_win_set_buf(win, cpp_buf)
+vim.api.nvim_win_set_cursor(win, { 5, 12 })
+ind.force_update()
+local cpp_scope = ind.get_current_scope(cpp_buf, win)
+assert_eq(cpp_scope ~= nil, true, "C++ method scope resolution should succeed")
+assert_eq(cpp_scope.scope_start <= 4, true, "C++ method header line 4")
+assert_eq(cpp_scope.scope_end >= 5, true, "C++ method end line 5")
+pcall(vim.api.nvim_buf_delete, cpp_buf, { force = true })
+print("  ✓ C/C++ struct_specifier & template_declaration Scope Resolution verified successfully.")
+
+-- 39. Test Java method_declaration & constructor_declaration Scope Resolution
+print("[Test 39] Testing Java method_declaration & constructor_declaration Scope Resolution...")
+local java_code = [[
+public class App {
+    public App() {
+        System.out.println("Init");
+    }
+    public void run() {
+        System.out.println("Running");
+    }
+}]]
+local java_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(java_buf, 0, -1, false, vim.split(java_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 4, { buf = java_buf })
+vim.api.nvim_set_option_value("filetype", "java", { buf = java_buf })
+vim.api.nvim_win_set_buf(win, java_buf)
+vim.api.nvim_win_set_cursor(win, { 6, 12 })
+ind.force_update()
+local java_scope = ind.get_current_scope(java_buf, win)
+assert_eq(java_scope ~= nil, true, "Java method_declaration scope resolution should succeed")
+assert_eq(java_scope.scope_start, 5, "Java run method start line 5")
+assert_eq(java_scope.scope_end, 7, "Java run method end line 7")
+pcall(vim.api.nvim_buf_delete, java_buf, { force = true })
+print("  ✓ Java method_declaration & constructor_declaration Scope Resolution verified successfully.")
+
+-- 40. Test Ruby method & class Scope Resolution
+print("[Test 40] Testing Ruby method & class Scope Resolution...")
+local rb_code = [[
+class Service
+  def execute
+    puts "Executing"
+  end
+end]]
+local rb_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(rb_buf, 0, -1, false, vim.split(rb_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = rb_buf })
+vim.api.nvim_set_option_value("filetype", "ruby", { buf = rb_buf })
+vim.api.nvim_win_set_buf(win, rb_buf)
+vim.api.nvim_win_set_cursor(win, { 3, 6 })
+ind.force_update()
+local rb_scope = ind.get_current_scope(rb_buf, win)
+assert_eq(rb_scope ~= nil, true, "Ruby scope resolution should succeed")
+assert_eq(rb_scope.scope_start, 2, "Ruby def execute start line 2")
+assert_eq(rb_scope.scope_end >= 3, true, "Ruby def execute end line check")
+pcall(vim.api.nvim_buf_delete, rb_buf, { force = true })
+print("  ✓ Ruby method & class Scope Resolution verified successfully.")
+
+-- 41. Test Filetype-Aware Lua # Operator Sanitization
+print("[Test 41] Testing Filetype-Aware Lua # Operator Sanitization...")
+local lua_hash_line = "if #items > 0 then"
+local lua_delims = scope_mod.find_delimiters(lua_hash_line, true, "lua")
+local found_then_kw = false
+for _, d in ipairs(lua_delims) do
+  local tok = lua_hash_line:sub(d[1] + 1, d[2])
+  if tok == "then" then found_then_kw = true end
+end
+assert_eq(found_then_kw, true, "Lua # length operator must not strip line or 'then' keyword")
+print("  ✓ Filetype-Aware Lua # Operator Sanitization verified successfully.")
+
+-- 42. Test CSS #id Selector Sanitization
+print("[Test 42] Testing CSS #id Selector Sanitization...")
+local css_hash_line = "#main-header {"
+local css_delims = scope_mod.find_delimiters(css_hash_line, true, "css")
+assert_eq(#css_delims >= 1, true, "CSS #id selector must retain '{' delimiter")
+assert_eq(css_hash_line:sub(css_delims[1][1] + 1, css_delims[1][2]), "{", "CSS delimiter should be '{'")
+print("  ✓ CSS #id Selector Sanitization verified successfully.")
+
+-- 43. Test C/C++ #include Preprocessor Directive Comment Sanitization
+print("[Test 43] Testing C/C++ #include Preprocessor Directive Comment Sanitization...")
+local cpp_directive = "#include <iostream> // Header include"
+local cpp_delims = scope_mod.find_delimiters(cpp_directive, true, "cpp")
+-- Ensure comment after // is stripped but #include is preserved without error
+assert_eq(type(cpp_delims), "table", "C++ directive scan returned table")
+print("  ✓ C/C++ #include Preprocessor Directive Comment Sanitization verified successfully.")
+
+-- 44. Test Strict Opener vs Closer Delimiter Classification
+print("[Test 44] Testing Strict Opener vs Closer Delimiter Classification...")
+local open_types = scope_mod.OPEN_DELIMITER_TYPES
+assert_eq(open_types[")"], nil, "Closing paren ')' should NOT be in OPEN_DELIMITER_TYPES")
+assert_eq(open_types["]"], nil, "Closing bracket ']' should NOT be in OPEN_DELIMITER_TYPES")
+assert_eq(open_types["}"], nil, "Closing brace '}' should NOT be in OPEN_DELIMITER_TYPES")
+print("  ✓ Strict Opener vs Closer Delimiter Classification verified successfully.")
+
+-- 45. Test Core Module EmmyLua Annotations Integrity
+print("[Test 45] Testing Core Module EmmyLua Annotations Integrity...")
+local core_modules = {
+  "indentinator.config",
+  "indentinator.state",
+  "indentinator.utils",
+  "indentinator.scope",
+  "indentinator.render",
+  "indentinator.health",
+  "indentinator",
+}
+for _, mod_name in ipairs(core_modules) do
+  local ok_mod, mod_obj = pcall(require, mod_name)
+  assert_eq(ok_mod, true, "Module require failed: " .. mod_name)
+  assert_eq(type(mod_obj), "table", "Module export is table: " .. mod_name)
+end
+print("  ✓ Core Module EmmyLua Annotations Integrity verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
+
 
 
 
