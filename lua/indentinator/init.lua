@@ -1,4 +1,6 @@
--- Minimal event-driven indentation guides for Neovim
+--- Main entry point and public facade for indentinator.nvim.
+--- Handles plugin setup, autocmd event listeners, statusline, and scope navigation APIs.
+
 local config = require("indentinator.config")
 local state_mod = require("indentinator.state")
 local state = state_mod.state
@@ -19,11 +21,12 @@ local M = {}
 
 local AUGROUP = "Indentinator"
 
+--- Active plugin configuration reference
 ---@type IndentinatorConfig
 M.config = config.values
 
---- Internal helper to iterate valid, loaded windows and execute a callback.
----@param fn function(win: number, buf: number)
+--- Helper function to iterate active, valid windows and execute callback.
+---@param fn fun(win: integer, buf: integer) Callback function
 local function for_each_active_win(fn)
   for _, win in ipairs(nvim_list_wins()) do
     if nvim_win_is_valid(win) then
@@ -35,49 +38,11 @@ local function for_each_active_win(fn)
   end
 end
 
---- Configures and initialises the plugin with user settings.
---- Idempotent: calling setup() more than once merges configuration but
---- does not re-register autocmds or duplicate initial renders.
----@param opts table|nil User configuration options
-function M.setup(opts)
-  opts = opts or {}
-  for k, v in pairs(opts) do
-    if v ~= nil then
-      if k == "scope" and type(v) == "table" then
-        M.config.scope = vim.tbl_extend("force", M.config.scope, v)
-      elseif k == "filetypes" and type(v) == "table" and type(M.config.filetypes) == "table" then
-        for ft, ft_cfg in pairs(v) do
-          M.config.filetypes[ft] = vim.tbl_extend("force", M.config.filetypes[ft] or {}, ft_cfg)
-        end
-      else
-        M.config[k] = v
-      end
-    end
-  end
-
-  if M._setup_done then
-    render.set_hl()
-    M.force_update()
-    return
-  end
-  M._setup_done = true
-
-  local resolved_char = config.resolve_config(0, "char")
-  local char_width = vim.fn.strdisplaywidth(resolved_char)
-  if char_width ~= 1 then
-    vim.notify(
-      ("indentinator: char %q has display width %d (expected 1), falling back to '│'"):format(
-        resolved_char,
-        char_width
-      ),
-      vim.log.levels.WARN
-    )
-    M.config.char = "│"
-  end
-
-  render.set_hl()
+--- Registers autocommands for buffer lifecycle, viewport scroll, cursor movement, and options.
+local function setup_autocmds()
   api.nvim_create_augroup(AUGROUP, { clear = true })
 
+  -- Attach listeners and render guides when buffer enters window
   api.nvim_create_autocmd("BufWinEnter", {
     group = AUGROUP,
     callback = function(e)
@@ -88,6 +53,7 @@ function M.setup(opts)
     end,
   })
 
+  -- Handle viewport scrolling and window resizing events
   api.nvim_create_autocmd({ "WinScrolled", "WinResized", "VimResized" }, {
     group = AUGROUP,
     callback = function(ev)
@@ -96,6 +62,7 @@ function M.setup(opts)
           M.force_update()
           return
         end
+
         local event_wins = vim.v.event and vim.v.event.all
         if event_wins and next(event_wins) then
           for win_id_str, _ in pairs(event_wins) do
@@ -109,6 +76,7 @@ function M.setup(opts)
           end
           return
         end
+
         local win = tonumber(ev.match) or nvim_get_current_win()
         if win and nvim_win_is_valid(win) then
           local ok_b, wb = pcall(nvim_win_get_buf, win)
@@ -120,6 +88,7 @@ function M.setup(opts)
     end,
   })
 
+  -- Handle window focus changes
   api.nvim_create_autocmd("WinEnter", {
     group = AUGROUP,
     callback = function()
@@ -133,6 +102,7 @@ function M.setup(opts)
     end,
   })
 
+  -- Clean up state when window closes
   api.nvim_create_autocmd("WinClosed", {
     group = AUGROUP,
     callback = function(e)
@@ -143,6 +113,7 @@ function M.setup(opts)
     end,
   })
 
+  -- Clean up state when buffer is deleted/unloaded/wiped
   api.nvim_create_autocmd({ "BufDelete", "BufUnload", "BufWipeout" }, {
     group = AUGROUP,
     callback = function(e)
@@ -152,6 +123,7 @@ function M.setup(opts)
     end,
   })
 
+  -- Cursor movement position tracking for active scope updates
   api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
     group = AUGROUP,
     callback = function()
@@ -162,9 +134,9 @@ function M.setup(opts)
       end
 
       local scope_cfg = config.resolve_scope(buf)
-
       local cursor = api.nvim_win_get_cursor(win)
       local row, col = cursor[1], cursor[2]
+
       state.last_cursor_row = state.last_cursor_row or {}
       state.last_cursor_col = state.last_cursor_col or {}
       state.last_leftcol = state.last_leftcol or {}
@@ -196,6 +168,7 @@ function M.setup(opts)
     end,
   })
 
+  -- Re-render on indentation or fold option changes
   api.nvim_create_autocmd("OptionSet", {
     group = AUGROUP,
     pattern = {
@@ -222,6 +195,7 @@ function M.setup(opts)
     end,
   })
 
+  -- Listen for fold keypresses in normal mode
   local on_key_ns = api.nvim_create_namespace("indentinator_on_key")
   vim.on_key(function(_, key)
     if not key or key == "" then
@@ -230,9 +204,7 @@ function M.setup(opts)
     local mode = api.nvim_get_mode().mode
     if mode == "n" or mode == "no" or mode == "nov" or mode == "noV" then
       local win = nvim_get_current_win()
-      local ok_fe, fe = pcall(function()
-        return vim.wo[win].foldenable
-      end)
+      local ok_fe, fe = pcall(function() return vim.wo[win].foldenable end)
       if ok_fe and fe == true then
         vim.schedule(function()
           local ok_b, buf = pcall(nvim_win_get_buf, win)
@@ -244,6 +216,7 @@ function M.setup(opts)
     end
   end, on_key_ns)
 
+  -- Re-initialize highlights on colorscheme change
   api.nvim_create_autocmd("ColorScheme", {
     group = AUGROUP,
     callback = function()
@@ -253,6 +226,49 @@ function M.setup(opts)
       end)
     end,
   })
+end
+
+--- Configures and initialises the plugin with user options.
+---@param opts table|nil User configuration table
+function M.setup(opts)
+  opts = opts or {}
+  for k, v in pairs(opts) do
+    if v ~= nil then
+      if k == "scope" and type(v) == "table" then
+        M.config.scope = vim.tbl_extend("force", M.config.scope, v)
+      elseif k == "filetypes" and type(v) == "table" and type(M.config.filetypes) == "table" then
+        for ft, ft_cfg in pairs(v) do
+          M.config.filetypes[ft] = vim.tbl_extend("force", M.config.filetypes[ft] or {}, ft_cfg)
+        end
+      else
+        M.config[k] = v
+      end
+    end
+  end
+
+  if M._setup_done then
+    render.set_hl()
+    M.force_update()
+    return
+  end
+  M._setup_done = true
+
+  -- Validate standard guide character display width
+  local resolved_char = config.resolve_config(0, "char")
+  local char_width = vim.fn.strdisplaywidth(resolved_char)
+  if char_width ~= 1 then
+    vim.notify(
+      ("indentinator: char %q has display width %d (expected 1), falling back to '│'"):format(
+        resolved_char,
+        char_width
+      ),
+      vim.log.levels.WARN
+    )
+    M.config.char = "│"
+  end
+
+  render.set_hl()
+  setup_autocmds()
 
   vim.schedule(function()
     for_each_active_win(function(win, buf)
@@ -264,24 +280,24 @@ function M.setup(opts)
   end)
 end
 
---- Explicitly enables guides for a specific buffer.
----@param buf number|nil The buffer handle (defaults to current)
+--- Enables indentation guide rendering for a buffer.
+---@param buf integer|nil Buffer handle (defaults to current buffer)
 function M.enable(buf)
   buf = buf or nvim_get_current_buf()
   state.enabled[buf] = true
   render.render_all(buf)
 end
 
---- Explicitly disables guides for a specific buffer.
----@param buf number|nil The buffer handle (defaults to current)
+--- Disables indentation guide rendering for a buffer.
+---@param buf integer|nil Buffer handle (defaults to current buffer)
 function M.disable(buf)
   buf = buf or nvim_get_current_buf()
   state.enabled[buf] = false
   render.clear_window_all(buf)
 end
 
---- Toggles guides on or off for a specific buffer.
----@param buf number|nil The buffer handle (defaults to current)
+--- Toggles indentation guide rendering for a buffer.
+---@param buf integer|nil Buffer handle (defaults to current buffer)
 function M.toggle(buf)
   buf = buf or nvim_get_current_buf()
   if config.is_enabled(buf, state) then
@@ -291,24 +307,24 @@ function M.toggle(buf)
   end
 end
 
---- Checks if guides are enabled for the specified buffer.
----@param buf number|nil The buffer handle (defaults to current)
+--- Checks if indentation guides are enabled for a buffer.
+---@param buf integer|nil Buffer handle (defaults to current buffer)
 ---@return boolean True if enabled, false otherwise
 function M.is_enabled(buf)
   return config.is_enabled(buf or nvim_get_current_buf(), state)
 end
 
---- Forces a full redraw of guides in all active windows.
+--- Forces a full redraw of guides across all active windows.
 function M.force_update()
   for_each_active_win(function(win, buf)
     render.render(buf, win)
   end)
 end
 
---- Retrieves the active scope bounds for a buffer and window.
----@param buf number|nil Buffer handle (defaults to current)
----@param win number|nil Window handle (defaults to current)
----@return table|nil Table containing { scope_start, scope_end, active_col } or nil
+--- Retrieves active scope information for a buffer and window.
+---@param buf integer|nil Buffer handle (defaults to window buffer)
+---@param win integer|nil Window handle (defaults to current window)
+---@return table|nil Scope details `{ scope_start, scope_end, active_col }` or nil
 function M.get_current_scope(buf, win)
   win = win or nvim_get_current_win()
   buf = buf or nvim_win_get_buf(win)
@@ -323,8 +339,7 @@ function M.get_current_scope(buf, win)
   local scope_start, scope_end, active_col = nil, nil, nil
 
   if scope_cfg.treesitter then
-    local ts_start, ts_end, ts_col =
-      scope.get_treesitter_scope_range(buf, win, width, tabstop)
+    local ts_start, ts_end, ts_col = scope.get_treesitter_scope_range(buf, win, width, tabstop)
     if ts_start and ts_end and ts_col then
       scope_start, scope_end, active_col = ts_start, ts_end, ts_col
     end
@@ -334,8 +349,7 @@ function M.get_current_scope(buf, win)
     active_col = utils.get_current_indent_col(buf, win)
     if active_col then
       local cursor = api.nvim_win_get_cursor(win)
-      scope_start, scope_end =
-        scope.get_scope_range(buf, cursor[1], active_col, width, tabstop)
+      scope_start, scope_end = scope.get_scope_range(buf, cursor[1], active_col, width, tabstop)
     end
   end
 
@@ -349,8 +363,8 @@ function M.get_current_scope(buf, win)
   return nil
 end
 
---- Jumps cursor to the top or bottom of the active scope block.
----@param where "top"|"bottom" Target position (defaults to "top")
+--- Jumps cursor to start ("top") or end ("bottom") of active scope block.
+---@param where "top"|"bottom"|"end" Target boundary
 function M.jump_to_scope(where)
   where = where or "top"
   local win = nvim_get_current_win()
@@ -366,8 +380,8 @@ function M.jump_to_scope(where)
   end
 end
 
---- Returns a human-readable statusline string of the current scope bounds.
----@return string Statusline segment (e.g. "Scope: L10-L45") or empty string
+--- Formats statusline string displaying current active scope range.
+---@return string Statusline string (e.g. "Scope: L10-L45") or empty string
 function M.statusline()
   local scope_info = M.get_current_scope()
   if scope_info and scope_info.scope_start and scope_info.scope_end then
@@ -377,4 +391,3 @@ function M.statusline()
 end
 
 return M
-

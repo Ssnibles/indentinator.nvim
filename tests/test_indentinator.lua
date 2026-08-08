@@ -342,8 +342,8 @@ vim.api.nvim_set_option_value("shiftwidth", 4, { buf = scroll_buf })
 vim.api.nvim_set_option_value("filetype", "lua", { buf = scroll_buf })
 vim.api.nvim_win_set_buf(win, scroll_buf)
 vim.api.nvim_win_set_height(win, 10)
-vim.wo[win].foldenable = false
-vim.wo[win].wrap = false
+vim.api.nvim_set_option_value("foldenable", false, { win = win })
+vim.api.nvim_set_option_value("wrap", false, { win = win })
 vim.cmd("redraw")
 
 -- Test leftcol = 0
@@ -368,7 +368,7 @@ print("  ✓ Horizontal scroll virtual text alignment verified successfully.")
 
 -- 15. Test Recursive AST & Multi-Language Delimiter Resolution
 print("[Test 15] Testing Recursive AST & Multi-Language Delimiter Resolution...")
-local scope_mod = require("indentinator.scope")
+scope_mod = require("indentinator.scope")
 local delim_line = "async function fetchData(url, opts) {"
 local found_start = scope_mod.find_delimiters(delim_line, true)
 assert_eq(#found_start >= 3, true, "Should find 'async', 'function', '(', '{' in JS header line")
@@ -412,7 +412,7 @@ print("  ✓ Corner underline step capping verified successfully.")
 
 -- 17. Test Preset Style Char Resolution
 print("[Test 17] Testing Preset Style Char Resolution...")
-local config_mod = require("indentinator.config")
+config_mod = require("indentinator.config")
 ind.setup({ style = "dashed" })
 local resolved_dashed_char = config_mod.resolve_config(0, "char")
 assert_eq(resolved_dashed_char, "┆", "Dashed style should resolve char to '┆'")
@@ -420,6 +420,16 @@ assert_eq(resolved_dashed_char, "┆", "Dashed style should resolve char to '┆
 ind.setup({ style = "dotted" })
 local resolved_dotted_char = config_mod.resolve_config(0, "char")
 assert_eq(resolved_dotted_char, "┊", "Dotted style should resolve char to '┊'")
+
+ind.setup({ style = "rounded" })
+local resolved_rounded_scope = config_mod.resolve_scope(0)
+assert_eq(resolved_rounded_scope.corner_top, "╭", "Rounded style should resolve corner_top to '╭'")
+assert_eq(resolved_rounded_scope.underline_char, "─", "Rounded style should resolve underline_char to '─'")
+
+ind.setup({ style = "rounded_thick" })
+local resolved_rounded_thick_scope = config_mod.resolve_scope(0)
+assert_eq(resolved_rounded_thick_scope.corner_top, "┏", "Rounded thick style should resolve corner_top to '┏'")
+assert_eq(resolved_rounded_thick_scope.underline_char, "━", "Rounded thick style should resolve underline_char to '━'")
 
 ind.setup({ style = "thick" })
 local resolved_thick_char = config_mod.resolve_config(0, "char")
@@ -448,9 +458,10 @@ print("  ✓ Multi-window buffer toggle deduplication verified successfully.")
 
 -- 19. Test Sanitize Line String with Comments
 print("[Test 19] Testing Sanitize Line String & Hash Comments...")
-local scope_mod = require("indentinator.scope")
+scope_mod = require("indentinator.scope")
 local test_url_line = 'local url = "http://example.com#section"'
-local sanitized = scope_mod.find_delimiters(test_url_line, true)
+local test_url_delims = scope_mod.find_delimiters(test_url_line, true)
+assert_eq(#test_url_delims >= 0, true, "Delimiter scan on URL line completed")
 -- Ensure sanitize_line does not strip the end of string inside quotes
 print("  ✓ Sanitize line string and hash comment order verified successfully.")
 
@@ -558,8 +569,8 @@ ind.setup({
 ind.force_update()
 vim.cmd("redraw")
 
-local scope_info = ind.get_current_scope(indented_buf, win)
--- Check virtual text chunks rendered for line 2 (scope_start: `function test()`, row index 1) vs line 5 (scope_end: `print(2)`, row index 4)
+-- Check virtual text chunks rendered for line 2 (scope_start: `function test()`, row index 1)
+-- vs line 5 (scope_end: `print(2)`, row index 4)
 render = require("indentinator.render")
 local line2_marks = vim.api.nvim_buf_get_extmarks(indented_buf, render.NS, { 1, 0 }, { 1, 999 }, { details = true })
 local line5_marks = vim.api.nvim_buf_get_extmarks(indented_buf, render.NS, { 4, 0 }, { 4, 999 }, { details = true })
@@ -646,7 +657,8 @@ ind.setup({
 ind.force_update()
 
 local no_ts_scope = ind.get_current_scope(no_ts_buf, win)
-assert_eq(no_ts_scope ~= nil, true, "Scope detection should gracefully fall back to indentation when TS parser is missing")
+local no_ts_msg = "Scope detection should gracefully fall back to indentation when TS parser is missing"
+assert_eq(no_ts_scope ~= nil, true, no_ts_msg)
 assert_eq(no_ts_scope.scope_start, 2, "Indentation scope start fallback line 2")
 
 -- Test state purging on BufWipeout
@@ -705,9 +717,16 @@ ind.setup({
 })
 ind.force_update()
 
--- Retrieve virtual text extmarks for line 3 (`local line1 = 1`, row index 2) and line 7 (`local line3 = 3`, row index 6)
+-- Retrieve virtual text extmarks for line 3 (`local line1 = 1`, row index 2)
+-- and line 7 (`local line3 = 3`, row index 6)
 local render_mod = require("indentinator.render")
-local all_marks = vim.api.nvim_buf_get_extmarks(scope_preservation_buf, render_mod.NS, { 0, 0 }, { -1, -1 }, { details = true })
+local all_marks = vim.api.nvim_buf_get_extmarks(
+  scope_preservation_buf,
+  render_mod.NS,
+  { 0, 0 },
+  { -1, -1 },
+  { details = true }
+)
 local mark_rows = {}
 local found_row2_guide = false
 for _, em in ipairs(all_marks) do
@@ -715,8 +734,10 @@ for _, em in ipairs(all_marks) do
   if em[2] == 2 then -- Row index 2 (`local line1 = 1`)
     local details = em[4]
     if details and details.virt_text then
-      for idx, chunk in ipairs(details.virt_text) do
-        if (chunk[1] == "│" or chunk[1] == "┃") and (chunk[2] == "IndentinatorGuide" or chunk[2] == "IndentinatorCurrentGuide") then
+      for _, chunk in ipairs(details.virt_text) do
+        local is_char = chunk[1] == "│" or chunk[1] == "┃"
+        local is_hl = chunk[2] == "IndentinatorGuide" or chunk[2] == "IndentinatorCurrentGuide"
+        if is_char and is_hl then
           found_row2_guide = true
         end
       end

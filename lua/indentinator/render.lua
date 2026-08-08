@@ -1,3 +1,6 @@
+--- Extmark rendering engine for indentinator.nvim.
+--- Handles virtual text construction, scope extmark rendering, buffer listeners, and highlight groups.
+
 local config = require("indentinator.config")
 local state_mod = require("indentinator.state")
 local state = state_mod.state
@@ -19,30 +22,31 @@ local nvim_win_get_buf = api.nvim_win_get_buf
 
 local M = {}
 
+--- Unique namespace for indentinator extmarks
 M.NS = api.nvim_create_namespace("indentinator")
 
---- Builds the virtual text chunks for a single line overlay.
----@param display_col number The indentation display width of the line
----@param width number The indentation width
----@param active_col number|nil The active guide column index (if any)
----@param show_current boolean|string The show_current_indent option value
----@param show_first boolean The show_first_indent_level option value
----@param char string The guide character
----@param current_char string|nil The active scope guide character
----@param is_scope_start boolean Whether this line is the scope top boundary
----@param is_scope_end boolean Whether this line is the scope bottom boundary
+--- Builds virtual text chunks for a single line overlay.
+---@param display_col integer Indentation display column width of line
+---@param width integer Indentation step width
+---@param active_col integer|nil Active guide column index
+---@param show_current boolean|string Show current indent option
+---@param show_first boolean Show first indent level option
+---@param char string Standard guide character
+---@param current_char string|nil Active scope guide character
+---@param is_scope_start boolean Whether line is scope top boundary
+---@param is_scope_end boolean Whether line is scope bottom boundary
 ---@param use_corner boolean Whether to draw corners
----@param corner_top string|nil Top corner character (defaults to ┏)
----@param corner_bottom string|nil Bottom corner character (defaults to ┗)
----@param underline_char string|nil Horizontal character for scope top/bottom (defaults to ━)
----@param char_hl string The standard guide highlight group
----@param current_hl string The current guide highlight group
----@param gap_hl string The gap highlight group
+---@param corner_top string|nil Custom top corner character
+---@param corner_bottom string|nil Custom bottom corner character
+---@param underline_char string|nil Custom horizontal connector line character
+---@param char_hl string Standard guide highlight group
+---@param current_hl string Current guide highlight group
+---@param gap_hl string Gap highlight group
 ---@param draw_gap_hl boolean Whether gap highlight is enabled
----@param start_col number|nil Starting display column index for horizontal scroll (defaults to 0)
----@param active_scope_col number|nil Active scope column for the view
----@param only_scope boolean|nil Whether to suppress active guide column outside scope boundaries
----@return table[] Array of chunks in format { { text, hl }, ... }
+---@param start_col integer|nil Horizontal scroll start column (leftcol)
+---@param active_scope_col integer|nil Active scope column for view
+---@param only_scope boolean|nil Whether to suppress active guide column outside scope
+---@return table[] Array of virtual text chunks `{ { text, hl }, ... }`
 function M.build_virt_text(
   display_col,
   width,
@@ -62,8 +66,8 @@ function M.build_virt_text(
   gap_hl,
   draw_gap_hl,
   start_col,
-  active_scope_col,
-  only_scope
+  _active_scope_col,
+  _only_scope
 )
   local chunks = {}
   local u_char = (underline_char and underline_char ~= "") and underline_char or "━"
@@ -108,7 +112,12 @@ function M.build_virt_text(
     else
       local fill_char = " "
       local g_hl = draw_gap_hl and gap_hl or nil
-      if active_col and (col > active_col) and (col < active_col + step) and (is_scope_start or is_scope_end) and effective_use_corner then
+      local is_corner_gap = active_col
+        and (col > active_col)
+        and (col < active_col + step)
+        and (is_scope_start or is_scope_end)
+        and effective_use_corner
+      if is_corner_gap then
         fill_char = u_char
         g_hl = current_hl
       end
@@ -119,9 +128,9 @@ function M.build_virt_text(
   return chunks
 end
 
---- Clears the indentation guide extmarks from a specific window viewport.
----@param buf number The buffer handle
----@param win number The window handle
+--- Clears extmarks from a specific window viewport.
+---@param buf integer Buffer handle
+---@param win integer Window handle
 function M.clear_window(buf, win)
   local ranges = state.windows[buf]
   if not ranges then return end
@@ -135,8 +144,8 @@ function M.clear_window(buf, win)
   end
 end
 
---- Clears all indentation guide extmarks from all tracked windows for a buffer.
----@param buf number The buffer handle
+--- Clears all extmarks from all tracked windows for a buffer.
+---@param buf integer Buffer handle
 function M.clear_window_all(buf)
   if state.windows[buf] then
     state.windows[buf] = nil
@@ -144,12 +153,115 @@ function M.clear_window_all(buf)
   pcall(nvim_buf_clear_namespace, buf, M.NS, 0, -1)
 end
 
---- Renders indentation guides for the visible lines of a buffer in a specific window.
----@param buf number The buffer handle
----@param win number The window handle
----@param skip_clear boolean|nil Whether to skip clearing prior extmarks (used by render_all)
+--- Applies scope block background highlight extmark.
+---@param buf integer Buffer handle
+---@param line_idx integer 0-indexed line row
+---@param bg_hl string Highlight group
+---@param priority integer Priority level
+local function render_scope_bg(buf, line_idx, bg_hl, priority)
+  pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
+    end_row = line_idx,
+    end_col = 0,
+    line_hl_group = bg_hl,
+    priority = priority + 2,
+  })
+end
+
+--- Applies text highlight on scope start header line.
+---@param buf integer Buffer handle
+---@param line_idx integer 0-indexed line row
+---@param line_text string Full line string
+---@param text_hl string Highlight group
+---@param priority integer Priority level
+local function render_scope_text_hl(buf, line_idx, line_text, text_hl, priority)
+  local text_len = #line_text
+  local lead_len = #(line_text:match("^%s*") or "")
+  if text_len > lead_len then
+    pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, lead_len, {
+      end_row = line_idx,
+      end_col = text_len,
+      hl_group = text_hl,
+      hl_eol = false,
+      hl_mode = "combine",
+      priority = priority + 101,
+    })
+  end
+end
+
+--- Applies delimiter highlight extmarks on scope boundary line.
+---@param buf integer Buffer handle
+---@param line_idx integer 0-indexed line row
+---@param delims integer[][] List of { s_col, e_col } byte ranges
+---@param delim_hl string Highlight group
+---@param priority integer Priority level
+local function render_delimiters(buf, line_idx, delims, delim_hl, priority)
+  for _, range in ipairs(delims) do
+    pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, range[1], {
+      end_row = line_idx,
+      end_col = range[2],
+      hl_group = delim_hl,
+      hl_eol = false,
+      hl_mode = "combine",
+      priority = priority + 105,
+    })
+  end
+end
+
+--- Calculates blank line display column values for empty line blocks.
+---@param lines string[] Array of visible line texts
+---@param results table<integer, integer> Map of line index to display col
+---@param line_widths table<integer, integer> Map of line index to step width
+---@param buf integer Buffer handle
+---@param r0 integer Top visible line row (1-indexed)
+---@param tabstop integer Buffer tabstop width
+local function process_blank_lines(lines, results, line_widths, buf, r0, tabstop)
+  local k = 1
+  local nlines = #lines
+  local line_count = nvim_buf_line_count(buf)
+
+  while k <= nlines do
+    local text = lines[k]
+    local lead = text:match("^%s*")
+    if text == "" or lead == text then
+      local b_start = k
+      while k <= nlines do
+        local t = lines[k]
+        local l = t:match("^%s*")
+        if t ~= "" and l ~= t then break end
+        k = k + 1
+      end
+      local b_end = k - 1
+
+      local above_val = (b_start > 1) and (results[b_start - 1] or 0)
+        or utils.find_indent_above(buf, r0 + b_start - 2, tabstop)
+      local above_width = (b_start > 1) and line_widths[b_start - 1] or nil
+
+      local below_val = (b_end < nlines) and (results[b_end + 1] or 0)
+        or utils.find_indent_below(buf, r0 + b_end, line_count, tabstop)
+      local below_width = (b_end < nlines) and line_widths[b_end + 1] or nil
+
+      local fill_val = math.max(above_val, below_val)
+      local fill_width = (fill_val == above_val) and above_width or below_width
+      if fill_val > 0 then
+        for b = b_start, b_end do
+          results[b] = fill_val
+          if fill_width then line_widths[b] = fill_width end
+        end
+      end
+    else
+      k = k + 1
+    end
+  end
+end
+
+--- Renders indentation guides for visible lines in a specific window.
+---@param buf integer Buffer handle
+---@param win integer Window handle
+---@param skip_clear boolean|nil Whether to skip clearing prior extmarks
 function M.render(buf, win, skip_clear)
-  if not buf or not win or not nvim_win_is_valid(win) or not nvim_buf_is_loaded(buf) then return end
+  if not buf or not win or not nvim_win_is_valid(win) or not nvim_buf_is_loaded(buf) then
+    return
+  end
   if not config.is_enabled(buf, state) then
     M.clear_window(buf, win)
     return
@@ -159,7 +271,6 @@ function M.render(buf, win, skip_clear)
     M.clear_window(buf, win)
   end
 
-  local leftcol = 0
   local ok_view, view = pcall(function()
     return api.nvim_win_call(win, function()
       return { vim.fn.line("w0"), vim.fn.line("w$"), vim.fn.winsaveview().leftcol }
@@ -168,7 +279,7 @@ function M.render(buf, win, skip_clear)
   if not ok_view or type(view) ~= "table" then return end
   local r0, r1 = view[1], view[2]
   if type(r0) ~= "number" or type(r1) ~= "number" or r1 < r0 or r0 <= 0 then return end
-  leftcol = (type(view[3]) == "number" and view[3] >= 0) and view[3] or 0
+  local leftcol = (type(view[3]) == "number" and view[3] >= 0) and view[3] or 0
 
   local ok_l, lines = pcall(nvim_buf_get_lines, buf, r0 - 1, r1, false)
   if not ok_l or #lines == 0 then
@@ -177,7 +288,7 @@ function M.render(buf, win, skip_clear)
   end
 
   local ok_ft, ft = pcall(nvim_get_option_value, "filetype", { buf = buf })
-  ft = (ok_ft and ft) or ""
+  ft = (ok_ft and type(ft) == "string") and ft or ""
 
   local width = utils.indent_width(buf, ft)
   local tabstop = utils.buffer_tabstop(buf)
@@ -186,6 +297,7 @@ function M.render(buf, win, skip_clear)
   local scope_start, scope_end, active_col, scope_node = nil, nil, nil, nil
   local scope_cfg = config.resolve_scope(buf, ft)
   local show_current = scope_cfg.enabled
+
   if show_current then
     if scope_cfg.treesitter then
       scope_start, scope_end, active_col, scope_node = scope.get_treesitter_scope_range(buf, win, width, tabstop)
@@ -219,52 +331,7 @@ function M.render(buf, win, skip_clear)
 
   local is_smart = config.resolve_config(buf, "smart", ft)
   if not is_smart then
-    local k = 1
-    local nlines = #lines
-    local line_count = nvim_buf_line_count(buf)
-    while k <= nlines do
-      local text = lines[k]
-      local lead = text:match("^%s*")
-      if text == "" or lead == text then
-        local b_start = k
-        while k <= nlines do
-          local t = lines[k]
-          local l = t:match("^%s*")
-          if t ~= "" and l ~= t then break end
-          k = k + 1
-        end
-        local b_end = k - 1
-
-        local above_val
-        local above_width = nil
-        if b_start > 1 then
-          above_val = results[b_start - 1] or 0
-          above_width = line_widths[b_start - 1]
-        else
-          above_val = utils.find_indent_above(buf, r0 + b_start - 2, tabstop)
-        end
-
-        local below_val
-        local below_width = nil
-        if b_end < nlines then
-          below_val = results[b_end + 1] or 0
-          below_width = line_widths[b_end + 1]
-        else
-          below_val = utils.find_indent_below(buf, r0 + b_end, line_count, tabstop)
-        end
-
-        local fill_val = math.max(above_val, below_val)
-        local fill_width = (fill_val == above_val) and above_width or below_width
-        if fill_val > 0 then
-          for b = b_start, b_end do
-            results[b] = fill_val
-            if fill_width then line_widths[b] = fill_width end
-          end
-        end
-      else
-        k = k + 1
-      end
-    end
+    process_blank_lines(lines, results, line_widths, buf, r0, tabstop)
   end
 
   local char = config.resolve_config(buf, "char", ft)
@@ -323,29 +390,12 @@ function M.render(buf, win, skip_clear)
 
       if is_in_scope and bg_enabled then
         if bg_full_block or is_this_scope_start or is_this_scope_end then
-          pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
-            end_row = line_idx,
-            end_col = 0,
-            line_hl_group = bg_hl,
-            priority = priority + 2,
-          })
+          render_scope_bg(buf, line_idx, bg_hl, priority)
         end
       end
 
       if is_this_scope_start and text_highlight_enabled then
-        local scope_line_text = lines[k]
-        local text_len = #scope_line_text
-        local lead_len = #(scope_line_text:match("^%s*"))
-        if text_len > lead_len then
-          pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, lead_len, {
-            end_row = line_idx,
-            end_col = text_len,
-            hl_group = text_hl,
-            hl_eol = false,
-            hl_mode = "combine",
-            priority = priority + 101,
-          })
-        end
+        render_scope_text_hl(buf, line_idx, lines[k], text_hl, priority)
       end
 
       if delimiters_enabled and (is_this_scope_start or is_this_scope_end) then
@@ -354,19 +404,9 @@ function M.render(buf, win, skip_clear)
           delims = scope.get_treesitter_delimiters(scope_node, line_idx, is_this_scope_start)
         end
         if not delims or #delims == 0 then
-          local line_text = lines[k]
-          delims = scope.find_delimiters(line_text, is_this_scope_start)
+          delims = scope.find_delimiters(lines[k], is_this_scope_start)
         end
-        for _, range in ipairs(delims) do
-          pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, range[1], {
-            end_row = line_idx,
-            end_col = range[2],
-            hl_group = delim_hl,
-            hl_eol = false,
-            hl_mode = "combine",
-            priority = priority + 105,
-          })
-        end
+        render_delimiters(buf, line_idx, delims, delim_hl, priority)
       end
 
       local line_active_col = nil
@@ -381,7 +421,9 @@ function M.render(buf, win, skip_clear)
       end
 
       local render_col = disp_col or 0
-      if render_col == 0 and line_active_col and scope_start and scope_end and abs_line >= scope_start and abs_line <= scope_end then
+      local is_scope_blank = render_col == 0 and line_active_col and scope_start and scope_end
+        and abs_line >= scope_start and abs_line <= scope_end
+      if is_scope_blank then
         if lines[k] == "" then
           render_col = line_active_col + (line_widths[k] or width)
         end
@@ -440,12 +482,16 @@ function M.render(buf, win, skip_clear)
   state.windows[buf][win] = { r0, r1 }
 end
 
---- Triggers rendering on all windows showing the specified buffer.
----@param buf number The buffer handle
+--- Triggers rendering on all valid windows displaying buffer.
+---@param buf integer Buffer handle
 function M.render_all(buf)
-  if not buf or not nvim_buf_is_valid(buf) or not nvim_buf_is_loaded(buf) then return end
+  if not buf or not nvim_buf_is_valid(buf) or not nvim_buf_is_loaded(buf) then
+    return
+  end
+
   local cur_win = pcall(api.nvim_get_current_win) and api.nvim_get_current_win() or nil
   local wins = {}
+
   for _, win in ipairs(nvim_list_wins()) do
     local ok_b, wb = pcall(nvim_win_get_buf, win)
     if ok_b and wb == buf then
@@ -456,6 +502,7 @@ function M.render_all(buf)
       end
     end
   end
+
   if #wins > 0 then
     pcall(nvim_buf_clear_namespace, buf, M.NS, 0, -1)
     if state.windows[buf] then state.windows[buf] = {} end
@@ -465,10 +512,12 @@ function M.render_all(buf)
   end
 end
 
---- Attaches buffer-change listeners to the specified buffer.
----@param buf number The buffer handle
+--- Attaches buffer-change listeners to buffer.
+---@param buf integer Buffer handle
 function M.attach(buf)
-  if state.attached[buf] and nvim_buf_is_loaded(buf) then return end
+  if state.attached[buf] and nvim_buf_is_loaded(buf) then
+    return
+  end
   if not nvim_buf_is_loaded(buf) then
     state.attached[buf] = nil
     return
@@ -505,7 +554,7 @@ function M.attach(buf)
   state.attached[buf] = ok and res or nil
 end
 
---- Initialises the default highlight groups.
+--- Initialises default highlight groups for indentinator.
 function M.set_hl()
   api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE", default = true })
   api.nvim_set_hl(0, "IndentinatorGap", { fg = "#555b6e", bg = "NONE", default = true })
@@ -523,4 +572,3 @@ function M.set_hl()
 end
 
 return M
-

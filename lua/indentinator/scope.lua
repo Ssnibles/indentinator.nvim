@@ -1,3 +1,6 @@
+--- Scope resolution and delimiter extraction logic for indentinator.nvim.
+--- Combines Treesitter AST analysis with pure indentation fallback algorithms.
+
 local utils = require("indentinator.utils")
 
 local api = vim.api
@@ -7,6 +10,7 @@ local nvim_buf_line_count = api.nvim_buf_line_count
 
 local M = {}
 
+--- AST node types that should be ignored during ancestor scope traversal
 M.IGNORE_AST_TYPES = {
   string = true,
   string_content = true,
@@ -64,6 +68,7 @@ M.IGNORE_AST_TYPES = {
   binding = true,
 }
 
+--- AST root node types representing full files/units
 M.ROOT_AST_TYPES = {
   translation_unit = true,
   program = true,
@@ -78,6 +83,7 @@ M.ROOT_AST_TYPES = {
   root = true,
 }
 
+--- AST container types representing distinct body blocks across languages
 M.BODY_CONTAINER_TYPES = {
   block = true,
   statement_block = true,
@@ -138,6 +144,7 @@ M.BODY_CONTAINER_TYPES = {
   component = true,
 }
 
+--- AST clause container types
 M.CLAUSE_CONTAINER_TYPES = {
   elif_clause = true,
   elseif_clause = true,
@@ -150,6 +157,7 @@ M.CLAUSE_CONTAINER_TYPES = {
   match_arm = true,
 }
 
+--- AST delimiter node types for scope openers
 M.OPEN_DELIMITER_TYPES = {
   ["{"] = true, ["("] = true, ["["] = true, [":"] = true,
   [")"] = true, ["]"] = true, ["}"] = true,
@@ -182,6 +190,7 @@ M.OPEN_DELIMITER_TYPES = {
   ["fn_keyword"] = true, ["type_keyword"] = true,
 }
 
+--- AST delimiter node types for scope closers
 M.CLOSE_DELIMITER_TYPES = {
   ["}"] = true, [")"] = true, ["]"] = true, [">"] = true, ["?>"] = true,
   ["end"] = true, ["done"] = true, ["fi"] = true, ["esac"] = true,
@@ -211,78 +220,82 @@ local CLOSE_KEYWORDS = {
 local OPEN_CHARS = { ["{"] = true, ["["] = true, ["("] = true, [")"] = true, ["]"] = true, ["}"] = true }
 local CLOSE_CHARS = { ["}"] = true, ["]"] = true, [")"] = true }
 
---- Determines the start and end rows of the active block scope.
----@param buf number The buffer handle
----@param cursor_row number The cursor line (1-indexed)
----@param active_col number The active guide column index
----@param width number The indentation width
----@param tabstop number The tabstop size
----@return number|nil The start row (1-indexed), or nil
----@return number|nil The end row (1-indexed), or nil
-function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
-  local line_count = nvim_buf_line_count(buf)
-  if line_count == 0 or not active_col then return nil, nil end
-
-  local limit = active_col + width
-  local scope_start = cursor_row
-  local scope_end = cursor_row
-
-  -- If the cursor line is non-blank and its own indent equals active_col, it IS
-  -- the scope-opener: no upward walk needed.
+--- Traverses upward from cursor row to find scope start row.
+---@param buf integer Buffer handle
+---@param cursor_row integer Cursor row (1-indexed)
+---@param active_col integer Active guide column
+---@param limit integer Active col limit threshold
+---@param tabstop integer Tabstop width
+---@return integer Scope start row (1-indexed)
+local function search_scope_start(buf, cursor_row, active_col, limit, tabstop)
   local ok_cur, cur_lines = pcall(nvim_buf_get_lines, buf, cursor_row - 1, cursor_row, false)
-  local cursor_is_opener = false
   if ok_cur and cur_lines and cur_lines[1] then
     local cl = cur_lines[1]
     local cl_lead = cl:match("^%s*")
     if cl ~= "" and cl_lead ~= cl then
-      cursor_is_opener = (utils.lead_display_width(cl_lead, tabstop) == active_col)
-    end
-  end
-
-  if not cursor_is_opener then
-    -- Search upwards; stop early if a blank line is crossed (separate block above)
-    local current = cursor_row - 1
-    local crossed_blank = false
-    while current > 0 do
-      local chunk_start = math.max(1, current - 50 + 1)
-      local ok, lines = pcall(nvim_buf_get_lines, buf, chunk_start - 1, current, false)
-      if not ok or #lines == 0 then break end
-
-      local stopped = false
-      for i = #lines, 1, -1 do
-        local idx = chunk_start + i - 1
-        local text = lines[i]
-        local lead = text:match("^%s*")
-        if text == "" or lead == text then
-          crossed_blank = true
-        else
-          local disp = utils.lead_display_width(lead, tabstop)
-          if disp < limit then
-            if not crossed_blank then
-              if disp == active_col then
-                scope_start = idx
-              else
-                scope_start = idx + 1
-              end
-            end
-            stopped = true
-            break
-          end
-          crossed_blank = false
-        end
+      if utils.lead_display_width(cl_lead, tabstop) == active_col then
+        return cursor_row
       end
-      if stopped then break end
-      scope_start = chunk_start
-      current = chunk_start - 1
     end
   end
 
-  -- Search downwards
+  local current = cursor_row - 1
+  local scope_start = cursor_row
+  local crossed_blank = false
+
+  while current > 0 do
+    local chunk_start = math.max(1, current - 50 + 1)
+    local ok, lines = pcall(nvim_buf_get_lines, buf, chunk_start - 1, current, false)
+    if not ok or #lines == 0 then
+      break
+    end
+
+    local stopped = false
+    for i = #lines, 1, -1 do
+      local idx = chunk_start + i - 1
+      local text = lines[i]
+      local lead = text:match("^%s*")
+      if text == "" or lead == text then
+        crossed_blank = true
+      else
+        local disp = utils.lead_display_width(lead, tabstop)
+        if disp < limit then
+          if not crossed_blank then
+            scope_start = (disp == active_col) and idx or (idx + 1)
+          end
+          stopped = true
+          break
+        end
+        crossed_blank = false
+      end
+    end
+    if stopped then
+      break
+    end
+    scope_start = chunk_start
+    current = chunk_start - 1
+  end
+
+  return scope_start
+end
+
+--- Traverses downward from cursor row to find scope end row.
+---@param buf integer Buffer handle
+---@param cursor_row integer Cursor row (1-indexed)
+---@param line_count integer Total line count in buffer
+---@param limit integer Active col limit threshold
+---@param tabstop integer Tabstop width
+---@return integer Scope end row (1-indexed)
+local function search_scope_end(buf, cursor_row, line_count, limit, tabstop)
   local current = cursor_row + 1
+  local scope_end = cursor_row
+
   while current <= line_count do
     local chunk_end = math.min(line_count, current + 50 - 1)
     local ok, lines = pcall(nvim_buf_get_lines, buf, current - 1, chunk_end, false)
-    if not ok or #lines == 0 then break end
+    if not ok or #lines == 0 then
+      break
+    end
 
     local stopped = false
     for i = 1, #lines do
@@ -298,73 +311,97 @@ function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
         end
       end
     end
-    if stopped then break end
+    if stopped then
+      break
+    end
     scope_end = chunk_end
     current = chunk_end + 1
   end
 
-  -- Trim trailing blank lines from scope_end so highlight does not bleed
-  if scope_end > scope_start then
-    local pre_trim_end = scope_end
-    local check_count = math.min(50, scope_end - scope_start)
-    local check_start = scope_end - check_count + 1
-    local ok_b, trim_lines = pcall(nvim_buf_get_lines, buf, check_start - 1, scope_end, false)
-    if ok_b and trim_lines and #trim_lines > 0 then
-      for idx = #trim_lines, 1, -1 do
-        local t = trim_lines[idx]
-        if t == "" or t:match("^%s*$") then
-          scope_end = scope_end - 1
-        else
-          break
-        end
-        if scope_end <= scope_start then break end
+  return scope_end
+end
+
+--- Trims trailing blank lines from scope end boundary.
+---@param buf integer Buffer handle
+---@param scope_start integer Scope start row (1-indexed)
+---@param scope_end integer Scope end row (1-indexed)
+---@param cursor_row integer Cursor row (1-indexed)
+---@return integer Trimmed scope end row
+local function trim_scope_end(buf, scope_start, scope_end, cursor_row)
+  if scope_end <= scope_start then
+    return scope_end
+  end
+
+  local pre_trim_end = scope_end
+  local check_count = math.min(50, scope_end - scope_start)
+  local check_start = scope_end - check_count + 1
+
+  local ok_b, trim_lines = pcall(nvim_buf_get_lines, buf, check_start - 1, scope_end, false)
+  if ok_b and trim_lines and #trim_lines > 0 then
+    for idx = #trim_lines, 1, -1 do
+      local t = trim_lines[idx]
+      if t == "" or t:match("^%s*$") then
+        scope_end = scope_end - 1
+      else
+        break
+      end
+      if scope_end <= scope_start then
+        break
       end
     end
-    if scope_end < cursor_row and cursor_row <= pre_trim_end then
-      scope_end = cursor_row
-    end
   end
+
+  if scope_end < cursor_row and cursor_row <= pre_trim_end then
+    scope_end = cursor_row
+  end
+
+  return scope_end
+end
+
+--- Determines start and end rows of active block scope using indentation analysis.
+---@param buf integer Buffer handle
+---@param cursor_row integer Cursor line row (1-indexed)
+---@param active_col integer Active guide column index
+---@param width integer Indentation width
+---@param tabstop integer Tabstop size
+---@return integer|nil scope_start (1-indexed)
+---@return integer|nil scope_end (1-indexed)
+function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
+  local line_count = nvim_buf_line_count(buf)
+  if line_count == 0 or not active_col then
+    return nil, nil
+  end
+
+  local limit = active_col + width
+  local scope_start = search_scope_start(buf, cursor_row, active_col, limit, tabstop)
+  local scope_end = search_scope_end(buf, cursor_row, line_count, limit, tabstop)
+  scope_end = trim_scope_end(buf, scope_start, scope_end, cursor_row)
 
   return scope_start, scope_end
 end
 
---- Determines scope range and active guide column using Treesitter AST if available.
---- Gracefully handles missing/unattached parsers and injected languages.
----@param buf number The buffer handle
----@param win number The window handle
----@param width number The default indentation width
----@param tabstop number The tabstop size
----@return number|nil scope_start (1-indexed)
----@return number|nil scope_end (1-indexed)
----@return number|nil active_col
----@return userdata|nil scope_node
-function M.get_treesitter_scope_range(buf, win, width, tabstop)
-  if not vim.treesitter or not vim.treesitter.get_parser then
-    return nil, nil, nil
-  end
-
-  local ok_p, parser = pcall(vim.treesitter.get_parser, buf)
-  if not ok_p or not parser then return nil, nil, nil end
-
-  pcall(function() parser:parse() end)
-
-  local cursor = nvim_win_get_cursor(win)
-  local cursor_row = cursor[1] - 1
-  local cursor_col = cursor[2]
-
+--- Resolves target Treesitter node at given cursor position.
+---@param parser userdata Treesitter parser
+---@param buf integer Buffer handle
+---@param cursor_row integer 0-indexed row
+---@param cursor_col integer 0-indexed col
+---@return userdata|nil Treesitter node
+local function resolve_ts_node(parser, buf, cursor_row, cursor_col)
   local node = nil
 
-  -- Handle injected language trees safely
+  -- Safely inspect injected language trees
   pcall(function()
     if parser.for_each_tree then
       parser:for_each_tree(function(tree, ltree)
         if tree and ltree then
           local root = tree:root()
           if root then
-            local r_s, r_sc, r_e, r_ec = root:range()
+            local r_s, _, r_e, _ = root:range()
             if cursor_row >= r_s and cursor_row <= r_e then
               local n = root:named_descendant_for_range(cursor_row, cursor_col, cursor_row, cursor_col)
-              if n then node = n end
+              if n then
+                node = n
+              end
             end
           end
         end
@@ -374,7 +411,9 @@ function M.get_treesitter_scope_range(buf, win, width, tabstop)
 
   if not node and vim.treesitter.get_node then
     local ok_n, n = pcall(vim.treesitter.get_node, { bufnr = buf, buf = buf, pos = { cursor_row, cursor_col } })
-    if ok_n then node = n end
+    if ok_n then
+      node = n
+    end
   end
 
   if not node then
@@ -389,26 +428,57 @@ function M.get_treesitter_scope_range(buf, win, width, tabstop)
     end
   end
 
-  if not node then return nil, nil, nil end
+  return node
+end
 
-  -- Traverse upward through ancestor AST nodes to locate a multi-line scope container
+--- Determines scope range and active guide column using Treesitter AST.
+---@param buf integer Buffer handle
+---@param win integer Window handle
+---@param width integer Default indentation width
+---@param tabstop integer Tabstop size
+---@return integer|nil scope_start (1-indexed)
+---@return integer|nil scope_end (1-indexed)
+---@return integer|nil active_col
+---@return userdata|nil scope_node
+function M.get_treesitter_scope_range(buf, win, width, tabstop)
+  if not vim.treesitter or not vim.treesitter.get_parser then
+    return nil, nil, nil, nil
+  end
+
+  local ok_p, parser = pcall(vim.treesitter.get_parser, buf)
+  if not ok_p or not parser then
+    return nil, nil, nil, nil
+  end
+
+  pcall(function() parser:parse() end)
+
+  local cursor = nvim_win_get_cursor(win)
+  local cursor_row = cursor[1] - 1
+  local cursor_col = cursor[2]
+
+  local node = resolve_ts_node(parser, buf, cursor_row, cursor_col)
+  if not node then
+    return nil, nil, nil, nil
+  end
+
+  -- Traverse upward through ancestor nodes for multi-line scope container
   local scope_node = nil
   local curr = node
   while curr do
     local type_name = curr:type()
     if not M.IGNORE_AST_TYPES[type_name] then
       local s_row, _, e_row, _ = curr:range()
-      if s_row < e_row then
-        if not M.ROOT_AST_TYPES[type_name] then
-          scope_node = curr
-          break
-        end
+      if s_row < e_row and not M.ROOT_AST_TYPES[type_name] then
+        scope_node = curr
+        break
       end
     end
     curr = curr:parent()
   end
 
-  if not scope_node then return nil, nil, nil end
+  if not scope_node then
+    return nil, nil, nil, nil
+  end
 
   local header_node = nil
   local parent_node = scope_node:parent()
@@ -441,14 +511,14 @@ end
 
 --- Recursively collects leaf delimiter nodes matching valid_types on target_row.
 ---@param node userdata TSNode
----@param target_row number 0-indexed line row
+---@param target_row integer 0-indexed line row
 ---@param valid_types table<string, boolean>
----@param matches table[] Array of { s_col, e_col }
----@param visited table<string|number, boolean>
+---@param matches integer[][] Array of { s_col, e_col }
+---@param visited table<string, boolean>
 local function collect_leaf_delimiters(node, target_row, valid_types, matches, visited)
   if not node then return end
   local ok_id, id = pcall(function() return node:id() end)
-  id = (ok_id and id) or tostring(node)
+  id = (ok_id and tostring(id)) or tostring(node)
   if visited[id] then return end
   visited[id] = true
 
@@ -460,10 +530,8 @@ local function collect_leaf_delimiters(node, target_row, valid_types, matches, v
 
   local child_count = node:child_count()
   if child_count == 0 then
-    if s_row == target_row and e_row == target_row then
-      if valid_types[type_name] then
-        table.insert(matches, { s_col, e_col })
-      end
+    if s_row == target_row and e_row == target_row and valid_types[type_name] then
+      table.insert(matches, { s_col, e_col })
     end
   else
     for i = 0, child_count - 1 do
@@ -475,21 +543,23 @@ local function collect_leaf_delimiters(node, target_row, valid_types, matches, v
   end
 end
 
---- Extracts delimiter byte ranges directly from Treesitter AST nodes on target_row.
+--- Extracts delimiter byte ranges from Treesitter AST nodes on target_row.
 ---@param scope_node userdata|nil Treesitter TSNode
----@param target_row number 0-indexed line row
----@param is_start boolean True for scope start line, false for scope end line
----@return table[] List of { s_col, e_col }
+---@param target_row integer 0-indexed line row
+---@param is_start boolean True for scope start line, false for end line
+---@return integer[][] List of { s_col, e_col }
 function M.get_treesitter_delimiters(scope_node, target_row, is_start)
-  if not scope_node then return {} end
-  local raw_matches = {}
+  if not scope_node then
+    return {}
+  end
 
+  local raw_matches = {}
   local valid_types = is_start and M.OPEN_DELIMITER_TYPES or M.CLOSE_DELIMITER_TYPES
   local visited = {}
 
   local curr_anc = scope_node
   while curr_anc do
-    local a_s_row, _, _, _ = curr_anc:range()
+    local a_s_row = curr_anc:range()
     if a_s_row == target_row then
       collect_leaf_delimiters(curr_anc, target_row, valid_types, raw_matches, visited)
       curr_anc = curr_anc:parent()
@@ -513,10 +583,13 @@ function M.get_treesitter_delimiters(scope_node, target_row, is_start)
 end
 
 --- Sanitizes line text by masking string literals and stripping comments.
----@param line_text string
----@return string Sanitized line text with strings replaced by spaces and comments stripped
+---@param line_text string Raw line text
+---@return string Sanitized line text
 local function sanitize_line(line_text)
-  if not line_text or line_text == "" then return "" end
+  if not line_text or line_text == "" then
+    return ""
+  end
+
   local clean = line_text:gsub('\\"', "  "):gsub("\\'", "  "):gsub("\\`", "  ")
   clean = clean:gsub('"[^"]*"', function(m) return string.rep(" ", #m) end)
   clean = clean:gsub("'[^']*'", function(m) return string.rep(" ", #m) end)
@@ -524,15 +597,22 @@ local function sanitize_line(line_text)
   clean = clean:gsub("%-%-.*$", ""):gsub("//.*$", ""):gsub("#.*$", "")
   clean = clean:gsub("/%*.-%*/", function(m) return string.rep(" ", #m) end)
   clean = clean:gsub("<!%-%-.-%-%->", function(m) return string.rep(" ", #m) end)
+
   return clean
 end
 
---- Internal helper to search text for keywords and single characters.
----@param clean_text string Sanitized line text
----@param keywords string[] List of keywords to search
----@param char_map table<string, boolean> Set of characters to match
----@return table[] Raw list of { s_col, e_col }
-local function search_delimiters(clean_text, keywords, char_map)
+--- Finds delimiter byte ranges on line_text using regex pattern matching.
+---@param line_text string Raw line text
+---@param is_start boolean True for start line, false for end line
+---@return integer[][] List of { s_col, e_col }
+function M.find_delimiters(line_text, is_start)
+  if not line_text or line_text == "" then
+    return {}
+  end
+
+  local clean_text = sanitize_line(line_text)
+  local keywords = is_start and OPEN_KEYWORDS or CLOSE_KEYWORDS
+  local char_map = is_start and OPEN_CHARS or CLOSE_CHARS
   local raw_matches = {}
 
   for _, kw in ipairs(keywords) do
@@ -553,22 +633,6 @@ local function search_delimiters(clean_text, keywords, char_map)
       table.insert(raw_matches, { col - 1, col })
     end
   end
-
-  return raw_matches
-end
-
---- Finds delimiter byte ranges (0-indexed col start/end) on line_text for scope start (is_start=true)
---- or scope end (is_start=false).
----@param line_text string
----@param is_start boolean
----@return table[] List of { s_col, e_col }
-function M.find_delimiters(line_text, is_start)
-  if not line_text or line_text == "" then return {} end
-  local clean_text = sanitize_line(line_text)
-  
-  local keywords = is_start and OPEN_KEYWORDS or CLOSE_KEYWORDS
-  local char_map = is_start and OPEN_CHARS or CLOSE_CHARS
-  local raw_matches = search_delimiters(clean_text, keywords, char_map)
 
   local unique = {}
   local matches = {}

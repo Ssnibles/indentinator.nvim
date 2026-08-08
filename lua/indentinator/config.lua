@@ -1,39 +1,54 @@
+--- Configuration management for indentinator.nvim.
+--- Handles plugin settings, visual style presets, per-filetype overrides, and buffer enablement logic.
+
 ---@class IndentinatorScopeConfig
----@field enabled boolean Whether to highlight the active scope guide
----@field range string Scope range: "block" (current block) or "global" (full column)
----@field only_scope boolean Whether to only draw the active scope column within scope boundaries
----@field background boolean|string Highlight scope background: true/"block", "boundaries", or false
+---@field enabled boolean Whether active scope guide highlighting is enabled
+---@field range "block"|"global" Scope calculation range ("block" or "global")
+---@field only_scope boolean Whether to clip active scope guide outside scope boundaries
+---@field background boolean|"block"|"boundaries" Scope background highlight mode
 ---@field corner boolean Whether to draw corner characters at scope boundaries
+---@field corners boolean|nil Alias for corner
+---@field use_corners boolean|nil Alias for corner
 ---@field corner_top string|nil Custom top corner character
 ---@field corner_bottom string|nil Custom bottom corner character
----@field underline_char string|nil Custom horizontal connector character for corners
----@field text_highlight boolean Whether to colour the text on the scope-start line
----@field delimiters boolean Whether to highlight scope delimiter characters (braces, brackets, keywords)
----@field treesitter boolean Whether to use Treesitter for scope calculation (falls back to indentation if unavailable)
+---@field underline_char string|nil Custom horizontal connector line character
+---@field text_highlight boolean Whether to colorize text on scope start line
+---@field delimiters boolean Whether to highlight scope opening/closing delimiter tokens
+---@field treesitter boolean Whether to use Treesitter for scope resolution
+
+---@class IndentinatorStylePreset
+---@field char string Standard guide character
+---@field current_char string Active guide character
+---@field corner_top string Top boundary corner character
+---@field corner_bottom string Bottom boundary corner character
+---@field underline_char string Horizontal connector line character
 
 ---@class IndentinatorConfig
----@field enabled boolean Whether the plugin is enabled globally or per-buffer
----@field smart boolean Whether blank lines inherit the indentation guides of neighbouring lines
----@field char string The character used for drawing the indentation guides
----@field current_char string|nil The character used for the active scope guide
----@field char_hl string The highlight group for standard guides
----@field gap_hl string The highlight group for gaps
----@field draw_gap_hl boolean Whether gaps should be highlighted
----@field show_first_indent_level boolean Whether the first indentation level (column 0) should be drawn
----@field indent_width number|nil Custom indentation width override (if nil, uses shiftwidth/tabstop)
----@field exclude string[] Filetypes to exclude from drawing guides
----@field exclude_buftypes string[] Buftypes to exclude from drawing guides
----@field priority number The priority level of the extmarks used for the guides
----@field scope IndentinatorScopeConfig Active scope highlighting configuration
----@field current_char_hl string The highlight group for the active guide
----@field scope_text_hl string The highlight group for the scope-start line text
----@field scope_bg_hl string The highlight group for scope boundary line background
----@field scope_delimiter_hl string The highlight group for scope delimiter characters
----@field exclude_fn (fun(buf: number): boolean)|nil Custom callback to exclude buffers
+---@field enabled boolean Global/per-buffer guide enablement status
+---@field smart boolean Whether blank lines inherit surrounding guide levels
+---@field char string|nil Custom standard guide character
+---@field current_char string|nil Custom active guide character
+---@field style string Visual preset name ("thick", "thin", "curved", "rounded", "heavy", etc.)
+---@field char_hl string Highlight group for standard guides
+---@field gap_hl string Highlight group for gap spaces
+---@field draw_gap_hl boolean Whether gap whitespace is highlighted
+---@field show_first_indent_level boolean Whether column 0 guide level is rendered
+---@field indent_width integer|nil Custom indent width override
+---@field exclude string[] Excluded filetypes
+---@field exclude_buftypes string[] Excluded buftypes
+---@field priority integer Extmark rendering priority
+---@field scope IndentinatorScopeConfig Active scope configuration
+---@field current_char_hl string Highlight group for active scope guide
+---@field scope_text_hl string Highlight group for scope start header text
+---@field scope_bg_hl string Highlight group for scope background
+---@field scope_delimiter_hl string Highlight group for scope delimiters
+---@field exclude_fn (fun(buf: integer): boolean)|nil Custom callback for buffer exclusion
 ---@field filetypes table<string, table> Per-filetype configuration overrides
 
 local M = {}
 
+--- Visual style presets defining guide and corner characters.
+---@type table<string, IndentinatorStylePreset>
 M.STYLE_PRESETS = {
   thick = {
     char = "│",
@@ -65,10 +80,31 @@ M.STYLE_PRESETS = {
   },
   curved = {
     char = "│",
-    current_char = "┃",
+    current_char = "│",
     corner_top = "╭",
     corner_bottom = "╰",
     underline_char = "─",
+  },
+  rounded = {
+    char = "│",
+    current_char = "│",
+    corner_top = "╭",
+    corner_bottom = "╰",
+    underline_char = "─",
+  },
+  curved_thick = {
+    char = "│",
+    current_char = "┃",
+    corner_top = "┏",
+    corner_bottom = "┗",
+    underline_char = "━",
+  },
+  rounded_thick = {
+    char = "│",
+    current_char = "┃",
+    corner_top = "┏",
+    corner_bottom = "┗",
+    underline_char = "━",
   },
   dashed = {
     char = "┆",
@@ -86,13 +122,14 @@ M.STYLE_PRESETS = {
   },
 }
 
+--- Default plugin configuration settings.
 ---@type IndentinatorConfig
 M.defaults = {
   enabled = true,
   smart = false,
-  char = nil,                        -- Standard guide character (defaults to style preset if nil)
-  current_char = nil,                -- Active guide character (defaults to style preset if nil)
-  style = "thick",                   -- Preset style: "thick", "thin", "double", "curved", "heavy", "dashed", "dotted"
+  char = nil,
+  current_char = nil,
+  style = "thick",
   char_hl = "IndentinatorGuide",
   gap_hl = "IndentinatorGap",
   draw_gap_hl = false,
@@ -102,17 +139,17 @@ M.defaults = {
   exclude_buftypes = { "terminal", "nofile", "quickfix", "prompt" },
   priority = 100,
   scope = {
-    enabled = false,        -- highlight the active scope guide
-    range = "block",        -- "block" (current block only) or "global" (entire column)
-    only_scope = true,      -- only draw active scope column within scope boundaries (cut out lines outside scope)
-    background = false,     -- highlight scope background: true/"block", "boundaries", or false
-    corner = true,          -- draw corner characters (┏ and ┗) at scope top/bottom boundaries
-    corner_top = nil,       -- custom top corner char (nil defaults to style preset, e.g. "┏")
-    corner_bottom = nil,    -- custom bottom corner char (nil defaults to style preset, e.g. "┗")
-    underline_char = nil,   -- horizontal character for scope top/bottom lines (nil defaults to style preset, e.g. "━")
-    text_highlight = true,  -- colour the text on the scope-start line
-    delimiters = false,     -- highlight delimiter characters (braces, brackets, keywords) at scope boundaries
-    treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
+    enabled = false,
+    range = "block",
+    only_scope = true,
+    background = false,
+    corner = true,
+    corner_top = nil,
+    corner_bottom = nil,
+    underline_char = nil,
+    text_highlight = true,
+    delimiters = false,
+    treesitter = false,
   },
   current_char_hl = "IndentinatorCurrentGuide",
   scope_text_hl = "IndentinatorScopeText",
@@ -122,111 +159,130 @@ M.defaults = {
   filetypes = {},
 }
 
---- Active configuration values table.
+--- Active user runtime configuration table.
 ---@type IndentinatorConfig
 M.values = vim.deepcopy(M.defaults)
 
---- Resolves the merged scope config for a buffer, respecting filetype overrides.
----@param buf number The buffer handle
----@param ft string|nil Optional pre-fetched filetype string
----@return IndentinatorScopeConfig The resolved scope configuration
-function M.resolve_scope(buf, ft)
-  local base = vim.deepcopy(M.values.scope or {})
-  if not ft then
-    local ok_ft, res = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
-    ft = (ok_ft and res) or ""
-  end
-  if ft ~= "" and M.values.filetypes and M.values.filetypes[ft] then
-    local ft_scope = M.values.filetypes[ft].scope
-    if type(ft_scope) == "table" then
-      base = vim.tbl_extend("force", base, ft_scope)
-    end
-  end
-
-  if base.corners ~= nil then
-    base.corner = base.corners
-  elseif base.use_corners ~= nil then
-    base.corner = base.use_corners
-  end
-
-  local style_name = M.resolve_config(buf, "style", ft) or "thick"
-  local preset = M.STYLE_PRESETS[style_name] or M.STYLE_PRESETS.thick
-  if not base.corner_top then base.corner_top = preset.corner_top end
-  if not base.corner_bottom then base.corner_bottom = preset.corner_bottom end
-  if not base.underline_char then base.underline_char = preset.underline_char end
-
-  return base
+--- Retrieves filetype for a given buffer safely.
+---@param buf integer Buffer handle
+---@return string Filetype string or empty string if unset
+local function get_filetype(buf)
+  local ok, ft = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
+  return (ok and type(ft) == "string") and ft or ""
 end
 
---- Resolves a configuration option, taking into account filetype-specific overrides.
----@param buf number The buffer handle
----@param opt string The configuration key to resolve
----@param ft string|nil Optional pre-fetched filetype string
+--- Resolves a configuration option value for a buffer, respecting per-filetype overrides.
+---@param buf integer The buffer handle
+---@param opt string Configuration key name
+---@param ft string|nil Optional pre-fetched filetype
 ---@return any The resolved configuration value
 function M.resolve_config(buf, opt, ft)
-  if not ft then
-    local ok_ft, res = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
-    ft = (ok_ft and res) or ""
-  end
-  local val = nil
+  ft = ft or get_filetype(buf)
+
+  -- Check per-filetype specific override first
   if ft ~= "" and M.values.filetypes and M.values.filetypes[ft] then
     local ft_cfg = M.values.filetypes[ft]
     if ft_cfg[opt] ~= nil then
-      val = ft_cfg[opt]
-    end
-  end
-  if val == nil then
-    val = M.values[opt]
-  end
-
-  if val == nil then
-    local style_name = M.values.style or "thick"
-    local preset = M.STYLE_PRESETS[style_name] or M.STYLE_PRESETS.thick
-    if opt == "current_char" then
-      val = preset.current_char
-    elseif opt == "char" then
-      val = preset.char
+      return ft_cfg[opt]
     end
   end
 
-  return val
+  -- Check global configuration value
+  local val = M.values[opt]
+  if val ~= nil then
+    return val
+  end
+
+  -- Fall back to style preset character defaults if char or current_char is unconfigured
+  local style_name = M.values.style or "thick"
+  local preset = M.STYLE_PRESETS[style_name] or M.STYLE_PRESETS.thick
+
+  if opt == "current_char" then
+    return preset.current_char
+  end
+  if opt == "char" then
+    return preset.char
+  end
+
+  return nil
 end
 
---- Checks if indentation guides are enabled for the specified buffer.
----@param buf number The buffer handle
----@param state IndentinatorState|nil State module reference
----@return boolean True if enabled, false otherwise
-function M.is_enabled(buf, state)
-  if not state then
-    state = require("indentinator.state").state
-  end
-  local v = state.enabled[buf]
-  if v ~= nil then return v end
+--- Resolves merged scope configuration for a buffer.
+---@param buf integer The buffer handle
+---@param ft string|nil Optional pre-fetched filetype
+---@return IndentinatorScopeConfig The resolved scope configuration table
+function M.resolve_scope(buf, ft)
+  ft = ft or get_filetype(buf)
+  local scope_cfg = vim.deepcopy(M.values.scope or {})
 
-  -- Exclude by custom function callback
+  -- Apply filetype scope override if present
+  if ft ~= "" and M.values.filetypes and M.values.filetypes[ft] then
+    local ft_scope = M.values.filetypes[ft].scope
+    if type(ft_scope) == "table" then
+      scope_cfg = vim.tbl_extend("force", scope_cfg, ft_scope)
+    end
+  end
+
+  -- Process corner option aliases (corners, use_corners)
+  if scope_cfg.corners ~= nil then
+    scope_cfg.corner = scope_cfg.corners
+  elseif scope_cfg.use_corners ~= nil then
+    scope_cfg.corner = scope_cfg.use_corners
+  end
+
+  -- Resolve boundary corner characters from active style preset defaults
+  local style_name = M.resolve_config(buf, "style", ft) or "thick"
+  local preset = M.STYLE_PRESETS[style_name] or M.STYLE_PRESETS.thick
+
+  scope_cfg.corner_top = scope_cfg.corner_top or preset.corner_top
+  scope_cfg.corner_bottom = scope_cfg.corner_bottom or preset.corner_bottom
+  scope_cfg.underline_char = scope_cfg.underline_char or preset.underline_char
+
+  return scope_cfg
+end
+
+--- Checks whether indentation guides are enabled for a buffer.
+---@param buf integer The buffer handle
+---@param state IndentinatorStateData|nil Optional state module reference
+---@return boolean True if guides should be rendered for this buffer, false otherwise
+function M.is_enabled(buf, state)
+  state = state or require("indentinator.state").state
+
+  -- Respect explicit buffer override state if set
+  local explicit = state.enabled[buf]
+  if explicit ~= nil then
+    return explicit
+  end
+
+  -- Check custom user exclusion callback
   local exclude_fn = M.resolve_config(buf, "exclude_fn")
   if type(exclude_fn) == "function" then
-    local ok, res = pcall(exclude_fn, buf)
-    if ok and res then return false end
+    local ok, result = pcall(exclude_fn, buf)
+    if ok and result then
+      return false
+    end
   end
 
-  -- Exclude by filetype
-  local ok_ft, ft = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
-  if not ok_ft or not ft then ft = "" end
-  local exclude_fts = M.resolve_config(buf, "exclude") or {}
-  for _, e in ipairs(exclude_fts) do
-    if ft == e then return false end
+  -- Check excluded filetypes
+  local ft = get_filetype(buf)
+  local excluded_fts = M.resolve_config(buf, "exclude", ft) or {}
+  for _, excluded_ft in ipairs(excluded_fts) do
+    if ft == excluded_ft then
+      return false
+    end
   end
 
-  -- Exclude by buftype
+  -- Check excluded buftypes
   local ok_bt, bt = pcall(vim.api.nvim_get_option_value, "buftype", { buf = buf })
-  if not ok_bt or not bt then bt = "" end
-  local exclude_bts = M.resolve_config(buf, "exclude_buftypes") or {}
-  for _, e in ipairs(exclude_bts) do
-    if bt == e then return false end
+  bt = (ok_bt and type(bt) == "string") and bt or ""
+  local excluded_bts = M.resolve_config(buf, "exclude_buftypes", ft) or {}
+  for _, excluded_bt in ipairs(excluded_bts) do
+    if bt == excluded_bt then
+      return false
+    end
   end
 
-  return M.resolve_config(buf, "enabled")
+  return M.resolve_config(buf, "enabled", ft) == true
 end
 
 return M
