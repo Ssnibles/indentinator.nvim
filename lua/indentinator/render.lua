@@ -320,6 +320,45 @@ function M.render(buf, win, skip_clear)
     state.current_indent[win] = active_col
   end
 
+  local body_start = scope_start
+  if show_current and scope_start ~= nil and scope_end ~= nil then
+    if scope_node then
+      local ok_r, s_r = pcall(function()
+        local type_name = scope_node:type()
+        if scope.BODY_CONTAINER_TYPES[type_name] then
+          return scope_node:range()
+        end
+        for child in scope_node:iter_children() do
+          if scope.BODY_CONTAINER_TYPES[child:type()] then
+            local cs_r = child:range()
+            return cs_r
+          end
+        end
+        return scope_node:range()
+      end)
+      if ok_r and s_r then
+        body_start = math.max(scope_start, math.min(scope_end, s_r + 1))
+      end
+    else
+      local ok_l, scope_lines = pcall(nvim_buf_get_lines, buf, scope_start - 1, scope_end, false)
+      if ok_l and scope_lines and #scope_lines > 0 then
+        local hdr_lead = scope_lines[1]:match("^%s*") or ""
+        local hdr_indent = utils.lead_display_width(hdr_lead, tabstop)
+        for i = 2, #scope_lines do
+          local line_t = scope_lines[i]
+          local lead_t = line_t:match("^%s*")
+          if line_t ~= "" and lead_t ~= line_t then
+            local disp_t = utils.lead_display_width(lead_t, tabstop)
+            if disp_t > hdr_indent then
+              body_start = scope_start + i - 2
+              break
+            end
+          end
+        end
+      end
+    end
+  end
+
   local results = {}
   local line_widths = {}
   for k, text in ipairs(lines) do
@@ -393,6 +432,8 @@ function M.render(buf, win, skip_clear)
       local is_this_scope_end = (scope_end ~= nil and abs_line == scope_end and scope_end > (scope_start or 0))
       local is_in_scope = (scope_start ~= nil and scope_end ~= nil
         and abs_line >= scope_start and abs_line <= scope_end)
+      local is_in_header_range = (scope_start ~= nil and body_start ~= nil
+        and abs_line >= scope_start and abs_line <= body_start)
 
       if is_in_scope and bg_enabled then
         if bg_full_block or is_this_scope_start or is_this_scope_end then
@@ -404,15 +445,44 @@ function M.render(buf, win, skip_clear)
         render_scope_text_hl(buf, line_idx, lines[k], text_hl, priority)
       end
 
-      if delimiters_enabled and (is_this_scope_start or is_this_scope_end) then
-        local delims = nil
-        if scope_node then
-          delims = scope.get_treesitter_delimiters(scope_node, line_idx, is_this_scope_start)
+      if delimiters_enabled then
+        local delims = {}
+        local seen_keys = {}
+        if is_in_header_range then
+          local open_delims = nil
+          if scope_node then
+            open_delims = scope.get_treesitter_delimiters(scope_node, line_idx, true)
+          end
+          if not open_delims or #open_delims == 0 then
+            open_delims = scope.find_delimiters(lines[k], true, ft)
+          end
+          for _, d in ipairs(open_delims) do
+            local key = d[1] .. ":" .. d[2]
+            if not seen_keys[key] then
+              seen_keys[key] = true
+              table.insert(delims, d)
+            end
+          end
         end
-        if not delims or #delims == 0 then
-          delims = scope.find_delimiters(lines[k], is_this_scope_start, ft)
+        if is_this_scope_end then
+          local close_delims = nil
+          if scope_node then
+            close_delims = scope.get_treesitter_delimiters(scope_node, line_idx, false)
+          end
+          if not close_delims or #close_delims == 0 then
+            close_delims = scope.find_delimiters(lines[k], false, ft)
+          end
+          for _, d in ipairs(close_delims) do
+            local key = d[1] .. ":" .. d[2]
+            if not seen_keys[key] then
+              seen_keys[key] = true
+              table.insert(delims, d)
+            end
+          end
         end
-        render_delimiters(buf, line_idx, delims, delim_hl, priority)
+        if #delims > 0 then
+          render_delimiters(buf, line_idx, delims, delim_hl, priority)
+        end
       end
 
       local line_active_col = nil

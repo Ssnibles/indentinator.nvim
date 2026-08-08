@@ -1153,6 +1153,66 @@ assert_eq(has_fn_kw, false, "if statement header must NOT match 'fn' or 'opts'")
 pcall(vim.api.nvim_buf_delete, fn_opts_buf, { force = true })
 print("  ✓ Lua function(opts) Scope Delimiter Precision verified successfully.")
 
+-- 48. Test Stacked CSS Selectors & Multi-Line Scope Header Starting Delimiter Highlighting
+print("[Test 48] Testing Stacked CSS Selectors & Multi-Line Scope Header Starting Delimiter Highlighting...")
+local css_stacked_code = [[
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  display: box;
+  margin: 2rem;
+}]]
+
+local css_stacked_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(css_stacked_buf, 0, -1, false, vim.split(css_stacked_code, "\n"))
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = css_stacked_buf })
+vim.api.nvim_set_option_value("filetype", "css", { buf = css_stacked_buf })
+vim.api.nvim_win_set_buf(win, css_stacked_buf)
+vim.api.nvim_win_set_height(win, 20)
+
+-- Cursor on line 9 (`font-weight: 400;`)
+vim.api.nvim_win_set_cursor(win, { 9, 5 })
+
+ind.setup({
+  scope = {
+    enabled = true,
+    delimiters = true,
+    treesitter = true,
+  },
+})
+ind.force_update()
+vim.cmd("redraw")
+
+local render_m = require("indentinator.render")
+local css_extmarks = vim.api.nvim_buf_get_extmarks(
+  css_stacked_buf,
+  render_m.NS,
+  { 0, 0 },
+  { -1, -1 },
+  { details = true }
+)
+
+local delim_rows = {}
+for _, em in ipairs(css_extmarks) do
+  local row = em[2]
+  local details = em[4]
+  if details and details.hl_group == "IndentinatorScopeDelimiter" then
+    delim_rows[row + 1] = true
+  end
+end
+
+assert_eq(delim_rows[6], true, "Line 6 ('h6 {') containing starting '{' delimiter must have IndentinatorScopeDelimiter extmark")
+assert_eq(delim_rows[12], true, "Line 12 ('}') containing ending '}' delimiter must have IndentinatorScopeDelimiter extmark")
+
+pcall(vim.api.nvim_buf_delete, css_stacked_buf, { force = true })
+print("  ✓ Stacked CSS Selectors & Multi-Line Scope Header Starting Delimiter Highlighting verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 
 
