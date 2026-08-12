@@ -188,18 +188,50 @@ local function render_scope_text_hl(buf, line_idx, line_text, text_hl, priority)
   end
 end
 
+--- Resolves effective highlight group for delimiter token, stripping underline if disabled.
+---@param base_hl string Base highlight group name
+---@param underline boolean Whether underline decoration is enabled
+---@return string Effective highlight group name
+local function get_effective_delim_hl(base_hl, underline)
+  if underline then
+    return base_hl
+  end
+
+  if base_hl == "IndentinatorScopeDelimiter" then
+    return "IndentinatorScopeDelimiterNoUnderline"
+  end
+
+  if base_hl:sub(-11) == "NoUnderline" then
+    return base_hl
+  end
+
+  local no_ul_hl = base_hl .. "NoUnderline"
+  local ok, hl_def = pcall(api.nvim_get_hl, 0, { name = base_hl, link = false })
+  if ok and hl_def then
+    local new_def = vim.deepcopy(hl_def)
+    new_def.underline = false
+    new_def.sp = nil
+    pcall(api.nvim_set_hl, 0, no_ul_hl, new_def)
+    return no_ul_hl
+  end
+
+  return base_hl
+end
+
 --- Applies delimiter highlight extmarks on scope boundary line.
 ---@param buf integer Buffer handle
 ---@param line_idx integer 0-indexed line row
 ---@param delims integer[][] List of { s_col, e_col } byte ranges
 ---@param delim_hl string Highlight group
 ---@param priority integer Priority level
-local function render_delimiters(buf, line_idx, delims, delim_hl, priority)
+---@param underline boolean|nil Whether to apply underline decoration to delimiters
+local function render_delimiters(buf, line_idx, delims, delim_hl, priority, underline)
+  local effective_hl = get_effective_delim_hl(delim_hl, underline ~= false)
   for _, range in ipairs(delims) do
     pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, range[1], {
       end_row = line_idx,
       end_col = range[2],
-      hl_group = delim_hl,
+      hl_group = effective_hl,
       hl_eol = false,
       hl_mode = "combine",
       priority = priority + 105,
@@ -481,7 +513,8 @@ function M.render(buf, win, skip_clear)
           end
         end
         if #delims > 0 then
-          render_delimiters(buf, line_idx, delims, delim_hl, priority)
+          local underline_delims = scope_cfg.underline_delimiters ~= false
+          render_delimiters(buf, line_idx, delims, delim_hl, priority, underline_delims)
         end
       end
 
@@ -643,6 +676,13 @@ function M.set_hl()
     italic = true,
     underline = true,
     sp = "#cdd6f4",
+    default = true,
+  })
+  api.nvim_set_hl(0, "IndentinatorScopeDelimiterNoUnderline", {
+    fg = "#cdd6f4",
+    bold = true,
+    italic = true,
+    underline = false,
     default = true,
   })
 end

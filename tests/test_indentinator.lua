@@ -1213,6 +1213,37 @@ assert_eq(delim_rows[12], true, "Line 12 ('}') containing ending '}' delimiter m
 pcall(vim.api.nvim_buf_delete, css_stacked_buf, { force = true })
 print("  ✓ Stacked CSS Selectors & Multi-Line Scope Header Starting Delimiter Highlighting verified successfully.")
 
+-- 49. Test Scope Delimiter Underline Configuration
+print("[Test 49] Testing Scope Delimiter Underline Configuration...")
+local ul_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(ul_buf, 0, -1, false, { "function test_ul()", "  return 1", "end" })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = ul_buf })
+vim.api.nvim_win_set_buf(win, ul_buf)
+vim.api.nvim_win_set_cursor(win, { 2, 2 })
+
+ind.setup({
+  scope = {
+    enabled = true,
+    delimiters = true,
+    underline_delimiters = false,
+  },
+})
+ind.force_update()
+vim.wait(50)
+
+render_m = require("indentinator.render")
+local ul_marks = vim.api.nvim_buf_get_extmarks(ul_buf, render_m.NS, { 0, 0 }, { -1, -1 }, { details = true })
+local found_no_ul = false
+for _, em in ipairs(ul_marks) do
+  local details = em[4]
+  if details and details.hl_group == "IndentinatorScopeDelimiterNoUnderline" then
+    found_no_ul = true
+  end
+end
+assert_eq(found_no_ul, true, "underline_delimiters = false should render IndentinatorScopeDelimiterNoUnderline")
+pcall(vim.api.nvim_buf_delete, ul_buf, { force = true })
+print("  ✓ Scope Delimiter Underline Configuration verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 
 

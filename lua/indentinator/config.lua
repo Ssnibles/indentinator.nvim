@@ -14,6 +14,7 @@
 ---@field underline_char string|nil Custom horizontal connector line character
 ---@field text_highlight boolean Whether to colorize text on scope start line
 ---@field delimiters boolean Whether to highlight scope opening/closing delimiter tokens
+---@field underline_delimiters boolean Whether to underline scope delimiter tokens
 ---@field treesitter boolean Whether to use Treesitter for scope resolution
 
 ---@class IndentinatorStylePreset
@@ -149,6 +150,7 @@ M.defaults = {
     underline_char = nil,
     text_highlight = true,
     delimiters = false,
+    underline_delimiters = true,
     treesitter = false,
   },
   current_char_hl = "IndentinatorCurrentGuide",
@@ -231,6 +233,11 @@ function M.resolve_scope(buf, ft)
     scope_cfg.corner = scope_cfg.corners
   elseif scope_cfg.use_corners ~= nil then
     scope_cfg.corner = scope_cfg.use_corners
+  end
+
+  -- Process underline option alias (underline)
+  if scope_cfg.underline ~= nil then
+    scope_cfg.underline_delimiters = scope_cfg.underline
   end
 
   -- Resolve boundary corner characters from active style preset defaults
