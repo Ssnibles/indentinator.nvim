@@ -15,6 +15,8 @@
 ---@field text_highlight boolean Whether to colorize text on scope start line
 ---@field delimiters boolean Whether to highlight scope opening/closing delimiter tokens
 ---@field underline_delimiters boolean Whether to underline scope delimiter tokens
+---@field rainbow_delimiters boolean Whether rainbow colors are applied to scope delimiters
+---@field rainbow_hls string[]|nil Custom array of highlight group names for rainbow delimiters
 ---@field treesitter boolean Whether to use Treesitter for scope resolution
 
 ---@class IndentinatorStylePreset
@@ -151,6 +153,8 @@ M.defaults = {
     text_highlight = true,
     delimiters = false,
     underline_delimiters = true,
+    rainbow_delimiters = false,
+    rainbow_hls = nil,
     treesitter = false,
   },
   current_char_hl = "IndentinatorCurrentGuide",
@@ -238,6 +242,11 @@ function M.resolve_scope(buf, ft)
   -- Process underline option alias (underline)
   if scope_cfg.underline ~= nil then
     scope_cfg.underline_delimiters = scope_cfg.underline
+  end
+
+  -- Process rainbow option alias (rainbow)
+  if scope_cfg.rainbow ~= nil then
+    scope_cfg.rainbow_delimiters = scope_cfg.rainbow
   end
 
   -- Resolve boundary corner characters from active style preset defaults

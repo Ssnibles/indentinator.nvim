@@ -55,3 +55,8 @@ end), {
     return vim.tbl_filter(function(c) return c:find(arg_lead, 1, true) == 1 end, choices)
   end,
 })
+
+vim.api.nvim_create_user_command("IndentinatorRainbowToggle", cmd(function()
+  local new_state = ind.toggle_rainbow_delimiters()
+  vim.notify("indentinator: Rainbow delimiters " .. (new_state and "enabled" or "disabled"))
+end), { desc = "Toggle rainbow delimiter highlighting" })

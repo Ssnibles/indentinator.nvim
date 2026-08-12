@@ -1244,6 +1244,52 @@ assert_eq(found_no_ul, true, "underline_delimiters = false should render Indenti
 pcall(vim.api.nvim_buf_delete, ul_buf, { force = true })
 print("  ✓ Scope Delimiter Underline Configuration verified successfully.")
 
+-- 50. Test Rainbow Delimiters Feature & Public API Function
+print("[Test 50] Testing Rainbow Delimiters Feature & Public API Function...")
+local rb_delim_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(rb_delim_buf, 0, -1, false, {
+  "function outer_rainbow()",
+  "  if true then",
+  "    return 1",
+  "  end",
+  "end",
+})
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = rb_delim_buf })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = rb_delim_buf })
+vim.api.nvim_win_set_buf(win, rb_delim_buf)
+vim.api.nvim_win_set_cursor(win, { 3, 4 })
+
+ind.setup({
+  scope = {
+    enabled = true,
+    rainbow_delimiters = true,
+    underline_delimiters = true,
+  },
+})
+ind.force_update()
+vim.wait(50)
+
+render_m = require("indentinator.render")
+local rb_marks = vim.api.nvim_buf_get_extmarks(rb_delim_buf, render_m.NS, { 0, 0 }, { -1, -1 }, { details = true })
+local found_rainbow_hl = false
+for _, em in ipairs(rb_marks) do
+  local details = em[4]
+  if details and details.hl_group and details.hl_group:match("^IndentinatorRainbow") then
+    found_rainbow_hl = true
+  end
+end
+assert_eq(found_rainbow_hl, true, "rainbow_delimiters = true should produce IndentinatorRainbow highlight extmarks")
+
+-- Test API functions ind.rainbow_delimiters and ind.toggle_rainbow_delimiters
+local toggled_state = ind.toggle_rainbow_delimiters()
+assert_eq(toggled_state, false, "toggle_rainbow_delimiters should turn rainbow delimiters off")
+
+local re_enabled = ind.rainbow_delimiters({ enabled = true, underline = false })
+assert_eq(re_enabled, true, "rainbow_delimiters({ enabled = true }) should turn rainbow delimiters back on")
+
+pcall(vim.api.nvim_buf_delete, rb_delim_buf, { force = true })
+print("  ✓ Rainbow Delimiters Feature & Public API Function verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 
 

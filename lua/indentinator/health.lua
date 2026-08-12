@@ -62,11 +62,13 @@ function M.check()
 
   local scope_cfg = c.scope or {}
   health.info(
-    ("scope.enabled=%s scope.range=%s scope.bg=%s scope.delims=%s scope.text_hl=%s scope.ts=%s"):format(
+    ("scope.enabled=%s scope.range=%s scope.bg=%s scope.delims=%s scope.underline_delims=%s scope.rainbow=%s scope.text_hl=%s scope.ts=%s"):format(
       tostring(scope_cfg.enabled),
       tostring(scope_cfg.range),
       tostring(scope_cfg.background),
       tostring(scope_cfg.delimiters),
+      tostring(scope_cfg.underline_delimiters),
+      tostring(scope_cfg.rainbow_delimiters),
       tostring(scope_cfg.text_highlight),
       tostring(scope_cfg.treesitter)
     )

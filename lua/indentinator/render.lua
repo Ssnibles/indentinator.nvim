@@ -25,6 +25,17 @@ local M = {}
 --- Unique namespace for indentinator extmarks
 M.NS = api.nvim_create_namespace("indentinator")
 
+--- Default highlight group names for rainbow delimiters.
+M.DEFAULT_RAINBOW_HLS = {
+  "IndentinatorRainbow1",
+  "IndentinatorRainbow2",
+  "IndentinatorRainbow3",
+  "IndentinatorRainbow4",
+  "IndentinatorRainbow5",
+  "IndentinatorRainbow6",
+  "IndentinatorRainbow7",
+}
+
 --- Builds virtual text chunks for a single line overlay.
 ---@param display_col integer Indentation display column width of line
 ---@param width integer Indentation step width
@@ -424,7 +435,8 @@ function M.render(buf, win, skip_clear)
   local bg_hl = config.resolve_config(buf, "scope_bg_hl", ft)
   local text_highlight_enabled = scope_cfg.text_highlight ~= false
   local text_hl = config.resolve_config(buf, "scope_text_hl", ft)
-  local delimiters_enabled = scope_cfg.delimiters == true
+  local rainbow_enabled = scope_cfg.rainbow_delimiters == true
+  local delimiters_enabled = scope_cfg.delimiters == true or rainbow_enabled
   local delim_hl = config.resolve_config(buf, "scope_delimiter_hl", ft)
 
   local use_corner = scope_cfg.corner ~= false
@@ -513,8 +525,18 @@ function M.render(buf, win, skip_clear)
           end
         end
         if #delims > 0 then
+          local active_delim_hl = delim_hl
+          if rainbow_enabled or scope_cfg.rainbow_hls then
+            local step_w = (line_widths[k] or width)
+            step_w = (step_w and step_w > 0) and step_w or 2
+            local depth = math.max(1, math.floor((active_col or 0) / step_w) + 1)
+            local rainbow_hls = scope_cfg.rainbow_hls or M.DEFAULT_RAINBOW_HLS
+            if #rainbow_hls > 0 then
+              active_delim_hl = rainbow_hls[(depth - 1) % #rainbow_hls + 1]
+            end
+          end
           local underline_delims = scope_cfg.underline_delimiters ~= false
-          render_delimiters(buf, line_idx, delims, delim_hl, priority, underline_delims)
+          render_delimiters(buf, line_idx, delims, active_delim_hl, priority, underline_delims)
         end
       end
 
@@ -685,6 +707,33 @@ function M.set_hl()
     underline = false,
     default = true,
   })
+
+  local rainbow_colors = {
+    IndentinatorRainbow1 = "#e06c75",
+    IndentinatorRainbow2 = "#e5c07b",
+    IndentinatorRainbow3 = "#98c379",
+    IndentinatorRainbow4 = "#56b6c2",
+    IndentinatorRainbow5 = "#61afef",
+    IndentinatorRainbow6 = "#c678dd",
+    IndentinatorRainbow7 = "#d19a66",
+  }
+  for name, hex in pairs(rainbow_colors) do
+    api.nvim_set_hl(0, name, {
+      fg = hex,
+      bold = true,
+      italic = true,
+      underline = true,
+      sp = hex,
+      default = true,
+    })
+    api.nvim_set_hl(0, name .. "NoUnderline", {
+      fg = hex,
+      bold = true,
+      italic = true,
+      underline = false,
+      default = true,
+    })
+  end
 end
 
 return M

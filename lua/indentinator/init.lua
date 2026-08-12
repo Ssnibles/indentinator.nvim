@@ -401,4 +401,43 @@ function M.statusline()
   return ""
 end
 
+--- Configures or toggles rainbow delimiter highlighting.
+---@param opts table|boolean|integer|nil Options table, boolean enablement status, buffer handle, or nil to toggle
+---@return boolean Current rainbow delimiters status
+function M.rainbow_delimiters(opts)
+  if type(opts) == "table" then
+    if opts.enabled ~= nil then
+      M.config.scope.rainbow_delimiters = opts.enabled
+    else
+      M.config.scope.rainbow_delimiters = true
+    end
+    if opts.rainbow_hls ~= nil then
+      M.config.scope.rainbow_hls = opts.rainbow_hls
+    end
+    if opts.underline ~= nil then
+      M.config.scope.underline_delimiters = opts.underline
+    elseif opts.underline_delimiters ~= nil then
+      M.config.scope.underline_delimiters = opts.underline_delimiters
+    end
+  elseif type(opts) == "boolean" then
+    M.config.scope.rainbow_delimiters = opts
+  elseif type(opts) == "number" then
+    local buf = opts
+    local current = config.resolve_scope(buf).rainbow_delimiters
+    M.config.scope.rainbow_delimiters = not current
+  else
+    M.config.scope.rainbow_delimiters = not (M.config.scope.rainbow_delimiters == true)
+  end
+
+  M.force_update()
+  return config.resolve_scope(0).rainbow_delimiters == true
+end
+
+--- Toggles rainbow delimiter highlighting for a buffer or globally.
+---@param buf integer|nil Buffer handle (defaults to current buffer)
+---@return boolean New rainbow delimiters enablement state
+function M.toggle_rainbow_delimiters(buf)
+  return M.rainbow_delimiters(buf)
+end
+
 return M
