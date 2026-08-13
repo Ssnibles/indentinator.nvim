@@ -1335,6 +1335,51 @@ assert_eq(found_end_delim, true, "line 4 'end' delimiter should be highlighted a
 pcall(vim.api.nvim_buf_delete, if_end_buf, { force = true })
 print("  ✓ Scope Delimiter End Boundary Resolution verified successfully.")
 
+-- 52. Test Treesitter Nested Block Scope & Closing Keyword Delimiter Highlighting (Lua if/then/end)
+print("[Test 52] Testing Treesitter Nested Block Scope & Closing Keyword Delimiter Highlighting...")
+local ts_lua_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(ts_lua_buf, 0, -1, false, {
+  "function test_foo()",
+  "  if condition then",
+  '    print("inside if")',
+  "    return",
+  "  end",
+  "end",
+})
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = ts_lua_buf })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = ts_lua_buf })
+vim.api.nvim_win_set_buf(win, ts_lua_buf)
+vim.api.nvim_win_set_cursor(win, { 3, 5 }) -- cursor inside if block
+
+ind.setup({
+  scope = {
+    enabled = true,
+    delimiters = true,
+    treesitter = true,
+  },
+})
+ind.force_update()
+vim.cmd("redraw")
+vim.wait(50)
+
+local ts_scope_info = ind.get_current_scope(ts_lua_buf, win)
+assert_eq(ts_scope_info ~= nil, true, "Treesitter Lua nested if scope should resolve")
+assert_eq(ts_scope_info and ts_scope_info.scope_start, 2, "Treesitter scope_start for nested if should be line 2")
+assert_eq(ts_scope_info and ts_scope_info.scope_end, 5, "Treesitter scope_end for nested if should be line 5 ('end')")
+
+local ts_marks = vim.api.nvim_buf_get_extmarks(ts_lua_buf, render_m.NS, { 0, 0 }, { -1, -1 }, { details = true })
+local found_ts_end_delim = false
+for _, em in ipairs(ts_marks) do
+  local row = em[2]
+  local details = em[4]
+  if row == 4 and details and details.hl_group and (details.hl_group:match("Indentinator.*Delimiter") or details.hl_group:match("IndentinatorRainbow")) then
+    found_ts_end_delim = true
+  end
+end
+assert_eq(found_ts_end_delim, true, "line 5 'end' delimiter should be highlighted by Treesitter scope resolution")
+pcall(vim.api.nvim_buf_delete, ts_lua_buf, { force = true })
+print("  ✓ Treesitter Nested Block Scope & Closing Keyword Delimiter Highlighting verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 
 

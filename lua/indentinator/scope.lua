@@ -87,6 +87,7 @@ M.ROOT_AST_TYPES = {
 M.BODY_CONTAINER_TYPES = {
   block = true,
   statement_block = true,
+  statement_list = true,
   compound_statement = true,
   body = true,
   class_body = true,
@@ -177,7 +178,6 @@ M.BODY_CONTAINER_TYPES = {
   SwitchExpr = true,
   SwitchProng = true,
   async_block = true,
-  unsafe_block = true,
   constructor_body = true,
   lambda = true,
   lambda_expression = true,
@@ -190,6 +190,11 @@ M.BODY_CONTAINER_TYPES = {
 
 --- AST parent header construct node types
 M.HEADER_CONTAINER_TYPES = {
+  assignment_statement = true,
+  variable_declaration = true,
+  local_declaration = true,
+  lexical_declaration = true,
+  variable_declarator = true,
   function_declaration = true,
   function_definition = true,
   function_item = true,
@@ -212,35 +217,13 @@ M.HEADER_CONTAINER_TYPES = {
   struct_item = true,
   union_specifier = true,
   union_item = true,
-  if_statement = true,
-  for_statement = true,
-  while_statement = true,
-  do_statement = true,
-  try_statement = true,
-  switch_statement = true,
-  match_statement = true,
-  match_expression = true,
-  impl_item = true,
-  trait_item = true,
-  trait_declaration = true,
-  mod_item = true,
-  module = true,
   type_declaration = true,
   type_spec = true,
   template_declaration = true,
-  lexical_declaration = true,
-  variable_declaration = true,
-  jsx_element = true,
-  function_component = true,
-  with_statement = true,
-  async_with_statement = true,
-  select_statement = true,
   namespace_definition = true,
   linkage_specification = true,
   method = true,
   singleton_method = true,
-  fn_proto = true,
-  FnProto = true,
 }
 
 --- AST clause container types
@@ -625,8 +608,10 @@ function M.get_treesitter_scope_range(buf, win, width, tabstop)
     if not M.IGNORE_AST_TYPES[type_name] then
       local s_row, _, e_row, _ = curr:range()
       if s_row < e_row and not M.ROOT_AST_TYPES[type_name] then
-        scope_node = curr
-        break
+        if not M.BODY_CONTAINER_TYPES[type_name] then
+          scope_node = curr
+          break
+        end
       end
     end
     curr = curr:parent()
@@ -636,14 +621,15 @@ function M.get_treesitter_scope_range(buf, win, width, tabstop)
     return nil, nil, nil, nil
   end
 
+  local s_row_scope = scope_node:range()
   local header_node = nil
   local parent_node = scope_node:parent()
   while parent_node do
     local p_type = parent_node:type()
     if M.ROOT_AST_TYPES[p_type] then break end
-    if M.HEADER_CONTAINER_TYPES[p_type] or not M.IGNORE_AST_TYPES[p_type] then
+    if M.HEADER_CONTAINER_TYPES[p_type] then
       local p_s, _, p_e, _ = parent_node:range()
-      if p_s < p_e then
+      if p_s == s_row_scope and p_s < p_e then
         header_node = parent_node
         break
       end
@@ -651,8 +637,8 @@ function M.get_treesitter_scope_range(buf, win, width, tabstop)
     parent_node = parent_node:parent()
   end
 
-  local full_node = header_node or scope_node
-  local start_row, _, end_row, _ = full_node:range()
+  local start_row = (header_node and header_node:range() or scope_node:range())
+  local _, _, end_row, _ = scope_node:range()
   local scope_start = start_row + 1
   local scope_end = end_row + 1
 
@@ -721,16 +707,20 @@ function M.get_treesitter_delimiters(scope_node, target_row, is_start)
   end
 
   local target_node = scope_node
-  local parent = scope_node:parent()
-  while parent do
-    local p_type = parent:type()
-    if M.ROOT_AST_TYPES[p_type] then break end
-    local p_s, _, p_e, _ = parent:range()
-    if p_s <= target_row and p_e >= target_row then
-      target_node = parent
-      break
+  if is_start then
+    local parent = scope_node:parent()
+    while parent do
+      local p_type = parent:type()
+      if M.ROOT_AST_TYPES[p_type] then break end
+      if M.HEADER_CONTAINER_TYPES[p_type] then
+        local p_s, _, p_e, _ = parent:range()
+        if p_s <= target_row and p_e >= target_row then
+          target_node = parent
+          break
+        end
+      end
+      parent = parent:parent()
     end
-    parent = parent:parent()
   end
 
   local raw_matches = {}
