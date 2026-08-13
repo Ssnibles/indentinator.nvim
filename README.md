@@ -14,7 +14,8 @@ A lightweight, high-performance indentation guides plugin for Neovim. Written in
 - **Viewport-Bounded**: Only computes and paints guides for lines visible in the active viewport.
 - **Smart Guide Continuity**: Empty lines inherit guides from surrounding blocks (`smart = false`) or break them (`smart = true`).
 - **Scope Background & Highlight**: Highlights active block scope background (`background = true`), scope-start line text, and boundary delimiters.
-- **Scope Delimiter Highlighting**: Highlights scope start and end delimiters (braces, brackets, parentheses, and keywords like `function`, `if`, `end`, `def`).
+- **Scope Delimiter Highlighting**: Highlights scope start and end delimiters (braces, brackets, parentheses, and keywords like `function`, `if`, `end`, `def`) with customizable underlining (`underline_delimiters`).
+- **Rainbow Delimiters**: Distinct depth-based color cycling for nested scope delimiters (`rainbow_delimiters`).
 - **Treesitter Integration**: Optional AST-based scope resolution (`scope.treesitter = true`) with automatic fallback to indentation-based blocks.
 - **Corner Connectors**: Draw top (`┏` / `╭`) and bottom (`┗` / `╰`) corner characters with horizontal connectors (`━` / `─`) at scope boundaries.
 - **Scope Navigation**: Command `:IndentinatorScopeJump` to jump cursor to top or bottom of the active block.
@@ -59,6 +60,7 @@ use {
 - `:IndentinatorEnable` — Enable guides in the current buffer.
 - `:IndentinatorDisable` — Disable guides in the current buffer.
 - `:IndentinatorToggle` — Toggle guides in the current buffer (append `!` to toggle in all active buffers).
+- `:IndentinatorRainbowToggle` — Toggle rainbow scope delimiter highlighting.
 - `:IndentinatorScopeJump [top|bottom]` — Jump cursor to the top or bottom of the active scope block.
 - `:IndentinatorHealth` — Run configuration diagnostics.
 
@@ -70,6 +72,10 @@ use {
   Returns a table containing `{ scope_start = line_num, scope_end = line_num, active_col = col_idx }` or `nil`.
 - **`require("indentinator").jump_to_scope("top" | "bottom")`**:
   Programmatically jump to the start or end of the current scope block.
+- **`require("indentinator").rainbow_delimiters(opts)`**:
+  Configure or toggle rainbow scope delimiters programmatically (`opts` can be table `{ enabled = true, rainbow_hls = {...}, underline = true }`, boolean, or buffer ID).
+- **`require("indentinator").toggle_rainbow_delimiters(buf)`**:
+  Toggle rainbow delimiters for a specific buffer or globally.
 - **`require("indentinator").statusline()`**:
   Returns a statusline segment string (e.g. `"Scope: L10-L45"`).
 
@@ -113,6 +119,9 @@ require("indentinator").setup({
     underline_char = nil,   -- custom horizontal connector character (nil defaults to style preset, e.g. "━" or "─")
     text_highlight = true,  -- colour the text on the scope-start line
     delimiters = false,     -- highlight scope boundary delimiters (braces, brackets, keywords like function/if/def/end)
+    underline_delimiters = true, -- whether to underline scope delimiters (set to false to disable underline)
+    rainbow_delimiters = false,   -- cycle rainbow highlight colors based on scope depth (or set scope.rainbow = true)
+    rainbow_hls = nil,       -- custom list of highlight group names for rainbow delimiters
     treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
   },
 
@@ -165,6 +174,7 @@ Standard highlight definitions:
 | `IndentinatorScopeText` | `#cdd6f4` | Foreground colour for scope-start line text |
 | `IndentinatorScopeBg` | `#1c1e2a` | Background colour for active scope block |
 | `IndentinatorScopeDelimiter` | `#cdd6f4` | Colour for scope delimiter braces/brackets/keywords (bold, italic, underline) |
+| `IndentinatorRainbow1`..`7` | Palette (Red, Yellow, Green, Cyan, Blue, Purple, Orange) | Depth-cycled colors for scope delimiters when `rainbow_delimiters = true` |
 
 Highlights are automatically re-applied on `ColorScheme` events. Customise colours in your configuration after loading your preferred colorscheme:
 
