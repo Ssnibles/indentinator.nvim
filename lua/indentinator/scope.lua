@@ -257,6 +257,7 @@ M.CLAUSE_CONTAINER_TYPES = {
 }
 
 --- AST delimiter node types for scope openers
+--- AST delimiter node types for scope openers
 M.OPEN_DELIMITER_TYPES = {
   ["{"] = true, ["("] = true, ["["] = true, [":"] = true,
   ["<"] = true, ["<?php"] = true, ["<?"] = true,
@@ -265,17 +266,13 @@ M.OPEN_DELIMITER_TYPES = {
   ["defmodule"] = true, ["defmacro"] = true, ["defprotocol"] = true, ["defimpl"] = true,
   ["class"] = true, ["struct"] = true, ["enum"] = true, ["union"] = true,
   ["interface"] = true, ["trait"] = true, ["impl"] = true, ["module"] = true,
-  ["namespace"] = true, ["package"] = true, ["type"] = true, ["import"] = true,
-  ["export"] = true, ["default"] = true, ["static"] = true, ["constexpr"] = true,
-  ["const"] = true, ["let"] = true, ["var"] = true,
+  ["namespace"] = true, ["package"] = true, ["type"] = true,
   ["if"] = true, ["elseif"] = true, ["elif"] = true, ["elsif"] = true, ["else"] = true,
   ["for"] = true, ["foreach"] = true, ["while"] = true, ["repeat"] = true, ["until"] = true,
   ["loop"] = true, ["match"] = true, ["switch"] = true, ["case"] = true,
   ["select"] = true, ["try"] = true, ["catch"] = true, ["except"] = true,
   ["finally"] = true, ["rescue"] = true, ["ensure"] = true, ["unless"] = true,
-  ["with"] = true, ["where"] = true, ["defer"] = true, ["go"] = true,
-  ["pub"] = true, ["public"] = true, ["private"] = true, ["protected"] = true,
-  ["async"] = true, ["unsafe"] = true, ["override"] = true,
+  ["with"] = true, ["where"] = true, ["defer"] = true,
   ["when"] = true, ["of"] = true, ["guard"] = true,
   ["proc"] = true, ["method"] = true, ["iterator"] = true, ["macro"] = true,
   ["template"] = true, ["concept"] = true, ["record"] = true, ["cond"] = true,
@@ -285,7 +282,7 @@ M.OPEN_DELIMITER_TYPES = {
   ["if_keyword"] = true, ["for_keyword"] = true, ["while_keyword"] = true,
   ["try_keyword"] = true, ["catch_keyword"] = true, ["struct_keyword"] = true,
   ["enum_keyword"] = true, ["interface_keyword"] = true, ["trait_keyword"] = true,
-  ["fn_keyword"] = true, ["type_keyword"] = true,
+  ["fn_keyword"] = true, ["type_keyword"] = true, ["opening_element"] = true,
 }
 
 --- AST delimiter node types for scope closers
@@ -294,26 +291,47 @@ M.CLOSE_DELIMITER_TYPES = {
   ["end"] = true, ["done"] = true, ["fi"] = true, ["esac"] = true,
   ["endfunction"] = true, ["endif"] = true, ["endfor"] = true, ["endforeach"] = true,
   ["endwhile"] = true, ["endswitch"] = true, ["enddeclare"] = true,
+  ["endclass"] = true, ["endmodule"] = true, ["endinterface"] = true,
+  ["endtry"] = true, ["endstruct"] = true,
   ["rescue"] = true, ["ensure"] = true, ["catch"] = true, ["finally"] = true,
   ["except"] = true, ["else"] = true, ["elif"] = true, ["elseif"] = true,
   ["elsif"] = true, ["until"] = true, ["/>"] = true, ["</"] = true,
+  ["end_keyword"] = true, ["closing_element"] = true, ["close_tag"] = true,
 }
 
 local FT_OPEN_KEYWORDS = {
   lua = { "function", "if", "elseif", "else", "for", "while", "repeat", "until", "do", "then" },
   python = { "def", "class", "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "match", "case", "async" },
   rust = { "fn", "impl", "struct", "enum", "union", "trait", "mod", "if", "else", "for", "while", "loop", "match", "async", "unsafe" },
-  go = { "func", "type", "struct", "interface", "if", "else", "for", "switch", "case", "select" },
+  go = { "func", "type", "struct", "interface", "if", "else", "for", "switch", "case", "select", "defer" },
   c = { "if", "else", "for", "while", "do", "switch", "case", "struct", "union", "enum" },
   cpp = { "if", "else", "for", "while", "do", "switch", "case", "struct", "union", "enum", "class", "namespace", "template", "try", "catch" },
-  javascript = { "function", "class", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
-  typescript = { "function", "class", "interface", "type", "enum", "namespace", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
-  typescriptreact = { "function", "class", "interface", "type", "enum", "namespace", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
-  javascriptreact = { "function", "class", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
+  javascript = { "function", "class", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally", "async" },
+  typescript = { "function", "class", "interface", "type", "enum", "namespace", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally", "async" },
+  typescriptreact = { "function", "class", "interface", "type", "enum", "namespace", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally", "async" },
+  javascriptreact = { "function", "class", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally", "async" },
   ruby = { "def", "class", "module", "if", "elsif", "else", "unless", "while", "until", "for", "do", "begin", "rescue", "ensure", "case", "when" },
+  elixir = { "def", "defp", "defmodule", "defmacro", "defprotocol", "defimpl", "if", "unless", "cond", "case", "with", "fn", "do", "try", "receive" },
   sh = { "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "case", "esac", "function" },
   bash = { "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "case", "esac", "function" },
   zsh = { "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "case", "esac", "function" },
+  php = { "function", "fn", "class", "trait", "interface", "enum", "if", "elseif", "else", "for", "foreach", "while", "do", "switch", "case", "try", "catch", "finally", "match" },
+  zig = { "fn", "struct", "enum", "union", "error", "test", "if", "else", "for", "while", "switch", "comptime" },
+  nim = { "proc", "func", "method", "iterator", "macro", "template", "type", "if", "elif", "else", "for", "while", "try", "except", "finally", "block", "case", "when" },
+  haskell = { "data", "type", "newtype", "class", "instance", "where", "let", "in", "do", "case", "of", "if", "then", "else" },
+  java = { "class", "interface", "enum", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
+  kotlin = { "fun", "class", "interface", "object", "enum", "if", "else", "for", "while", "do", "when", "try", "catch", "finally" },
+}
+
+local FT_CLOSE_KEYWORDS = {
+  lua = { "end", "until", "else", "elseif" },
+  ruby = { "end", "until", "else", "elsif", "rescue", "ensure" },
+  elixir = { "end", "else", "catch", "after", "rescue" },
+  sh = { "fi", "esac", "done", "else", "elif" },
+  bash = { "fi", "esac", "done", "else", "elif" },
+  zsh = { "fi", "esac", "done", "else", "elif" },
+  php = { "endfunction", "endif", "endfor", "endforeach", "endwhile", "endswitch", "enddeclare", "else", "elseif", "catch", "finally" },
+  python = { "elif", "else", "except", "finally" },
 }
 
 local OPEN_KEYWORDS = {
@@ -322,12 +340,13 @@ local OPEN_KEYWORDS = {
   "defmacro", "defprotocol", "defimpl", "class", "struct", "enum", "union", "interface",
   "trait", "impl", "module", "namespace", "package", "type", "switch", "case", "select",
   "try", "catch", "except", "finally", "rescue", "ensure", "unless", "with", "where",
-  "loop", "match"
+  "loop", "match", "cond", "receive"
 }
 
 local CLOSE_KEYWORDS = {
   "end", "done", "fi", "esac", "rescue", "ensure", "until", "endif", "endfunction",
-  "endfor", "endforeach", "endwhile", "endswitch", "enddeclare"
+  "endfor", "endforeach", "endwhile", "endswitch", "enddeclare", "endclass", "endmodule",
+  "endinterface", "endtry", "endstruct", "else", "elif", "elseif", "elsif", "catch", "finally", "except"
 }
 
 local OPEN_CHARS = { ["{"] = true, ["["] = true, ["("] = true }
@@ -396,10 +415,12 @@ end
 ---@param buf integer Buffer handle
 ---@param cursor_row integer Cursor row (1-indexed)
 ---@param line_count integer Total line count in buffer
+---@param active_col integer Active guide column threshold
 ---@param limit integer Active col limit threshold
 ---@param tabstop integer Tabstop width
+---@param ft string|nil Optional filetype
 ---@return integer Scope end row (1-indexed)
-local function search_scope_end(buf, cursor_row, line_count, limit, tabstop)
+local function search_scope_end(buf, cursor_row, line_count, active_col, limit, tabstop, ft)
   local current = cursor_row + 1
   local scope_end = cursor_row
 
@@ -418,7 +439,16 @@ local function search_scope_end(buf, cursor_row, line_count, limit, tabstop)
       if text ~= "" and lead ~= text then
         local disp = utils.lead_display_width(lead, tabstop)
         if disp < limit then
-          scope_end = idx - 1
+          if disp == active_col then
+            local delims = M.find_delimiters(text, false, ft)
+            if #delims > 0 then
+              scope_end = idx
+            else
+              scope_end = idx - 1
+            end
+          else
+            scope_end = idx - 1
+          end
           stopped = true
           break
         end
@@ -477,9 +507,10 @@ end
 ---@param active_col integer Active guide column index
 ---@param width integer Indentation width
 ---@param tabstop integer Tabstop size
+---@param ft string|nil Optional filetype
 ---@return integer|nil scope_start (1-indexed)
 ---@return integer|nil scope_end (1-indexed)
-function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
+function M.get_scope_range(buf, cursor_row, active_col, width, tabstop, ft)
   if not buf or not api.nvim_buf_is_valid(buf) then
     return nil, nil
   end
@@ -489,11 +520,13 @@ function M.get_scope_range(buf, cursor_row, active_col, width, tabstop)
     return nil, nil
   end
 
+  ft = ft or (api.nvim_get_option_value and api.nvim_get_option_value("filetype", { buf = buf }))
+
   cursor_row = math.min(math.max(1, cursor_row or 1), line_count)
 
   local limit = active_col + width
   local scope_start = search_scope_start(buf, cursor_row, active_col, limit, tabstop)
-  local scope_end = search_scope_end(buf, cursor_row, line_count, limit, tabstop)
+  local scope_end = search_scope_end(buf, cursor_row, line_count, active_col, limit, tabstop, ft)
   scope_end = trim_scope_end(buf, scope_start, scope_end, cursor_row)
 
   return scope_start, scope_end
@@ -755,7 +788,7 @@ function M.find_delimiters(line_text, is_start, ft)
   end
 
   local clean_text = sanitize_line(line_text, ft)
-  local keywords = CLOSE_KEYWORDS
+  local keywords = (ft and FT_CLOSE_KEYWORDS[ft]) or CLOSE_KEYWORDS
   if is_start then
     keywords = (ft and FT_OPEN_KEYWORDS[ft]) or OPEN_KEYWORDS
   end

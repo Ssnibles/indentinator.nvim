@@ -1290,6 +1290,51 @@ assert_eq(re_enabled, true, "rainbow_delimiters({ enabled = true }) should turn 
 pcall(vim.api.nvim_buf_delete, rb_delim_buf, { force = true })
 print("  ✓ Rainbow Delimiters Feature & Public API Function verified successfully.")
 
+-- 51. Test Scope Delimiter End Boundary Resolution (Lua if/then/end)
+print("[Test 51] Testing Scope Delimiter End Boundary Resolution (Lua if/then/end)...")
+local if_end_buf = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_lines(if_end_buf, 0, -1, false, {
+  "function check_exiting()",
+  "  if vim.v.exiting == nil or vim.v.exiting ~= 0 then",
+  "    return",
+  "  end",
+  "end",
+})
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = if_end_buf })
+vim.api.nvim_set_option_value("filetype", "lua", { buf = if_end_buf })
+vim.api.nvim_win_set_buf(win, if_end_buf)
+vim.api.nvim_win_set_cursor(win, { 2, 5 }) -- cursor on if line
+vim.cmd("redraw")
+
+ind.setup({
+  scope = {
+    enabled = true,
+    delimiters = true,
+    treesitter = false,
+  },
+})
+ind.force_update()
+vim.cmd("redraw")
+vim.wait(50)
+
+render_m = require("indentinator.render")
+local scope_info = ind.get_current_scope(if_end_buf, win)
+assert_eq(scope_info and scope_info.scope_start, 2, "scope_start for if should be line 2")
+assert_eq(scope_info and scope_info.scope_end, 4, "scope_end for if should include line 4 (end)")
+
+local if_end_marks = vim.api.nvim_buf_get_extmarks(if_end_buf, render_m.NS, { 0, 0 }, { -1, -1 }, { details = true })
+local found_end_delim = false
+for _, em in ipairs(if_end_marks) do
+  local row = em[2]
+  local details = em[4]
+  if row == 3 and details and details.hl_group and (details.hl_group:match("Indentinator.*Delimiter") or details.hl_group:match("IndentinatorRainbow")) then
+    found_end_delim = true
+  end
+end
+assert_eq(found_end_delim, true, "line 4 'end' delimiter should be highlighted as a scope delimiter")
+pcall(vim.api.nvim_buf_delete, if_end_buf, { force = true })
+print("  ✓ Scope Delimiter End Boundary Resolution verified successfully.")
+
 print("=== All Indentinator Tests Passed! ===")
 
 
