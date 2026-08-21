@@ -1,75 +1,19 @@
---- Scope resolution and delimiter extraction logic for indentinator.nvim.
---- Combines Treesitter AST analysis with pure indentation fallback algorithms.
+--- Scope resolution engine for indentinator.nvim.
+--- Provides Treesitter AST scope analysis with pure indentation fallback algorithms.
 
 local utils = require("indentinator.utils")
 
 local api = vim.api
+local nvim_buf_is_valid = api.nvim_buf_is_valid
+local nvim_win_is_valid = api.nvim_win_is_valid
 local nvim_buf_get_lines = api.nvim_buf_get_lines
 local nvim_win_get_cursor = api.nvim_win_get_cursor
 local nvim_buf_line_count = api.nvim_buf_line_count
 
 local M = {}
 
---- AST node types that should be ignored during ancestor scope traversal
-M.IGNORE_AST_TYPES = {
-  string = true,
-  string_content = true,
-  string_literal = true,
-  raw_string_literal = true,
-  template_string = true,
-  string_fragment = true,
-  char_literal = true,
-  character_literal = true,
-  interpreted_string_literal = true,
-  multiline_string = true,
-  heredoc_body = true,
-  heredoc_start = true,
-  comment = true,
-  line_comment = true,
-  block_comment = true,
-  doc_comment = true,
-  comment_content = true,
-  regex = true,
-  regex_pattern = true,
-  ternary_expression = true,
-  conditional_expression = true,
-  binary_expression = true,
-  unary_expression = true,
-  assignment_expression = true,
-  assignment_statement = true,
-  variable_declaration = true,
-  local_declaration = true,
-  expression_statement = true,
-  return_statement = true,
-  break_statement = true,
-  goto_statement = true,
-  declaration = true,
-  field_declaration = true,
-  lexical_declaration = true,
-  variable_declarator = true,
-  statement = true,
-  simple_statement = true,
-  clause = true,
-  argument_list = true,
-  parameter_list = true,
-  arguments = true,
-  parameters = true,
-  tuple_expression = true,
-  array_expression = true,
-  vector_expression = true,
-  macro_invocation = true,
-  call_expression = true,
-  member_expression = true,
-  parenthesized_expression = true,
-  field_expression = true,
-  property_identifier = true,
-  pair = true,
-  property = true,
-  binding = true,
-}
-
---- AST root node types representing full files/units
-M.ROOT_AST_TYPES = {
+--- Root AST node types that represent full document root level across languages
+local ROOT_AST_TYPES = {
   translation_unit = true,
   program = true,
   source_file = true,
@@ -78,474 +22,39 @@ M.ROOT_AST_TYPES = {
   script = true,
   document = true,
   compilation_unit = true,
-  stylesheet = true,
   file = true,
   root = true,
 }
 
---- AST container types representing distinct body blocks across languages
-M.BODY_CONTAINER_TYPES = {
-  block = true,
-  statement_block = true,
-  statement_list = true,
-  compound_statement = true,
-  body = true,
-  class_body = true,
-  interface_body = true,
-  enum_body = true,
-  enum_body_declarations = true,
-  body_statement = true,
-  do_block = true,
-  do_group = true,
-  switch_block = true,
-  switch_body = true,
-  switch_section = true,
-  block_statement = true,
-  communication_case = true,
-  expression_case = true,
-  table_constructor = true,
-  dictionary = true,
-  object = true,
-  array = true,
-  list = true,
-  tuple = true,
-  set = true,
-  declaration_list = true,
-  field_declaration_list = true,
-  enumerator_list = true,
-  initializer_list = true,
-  array_initializer = true,
-  composite_literal = true,
-  literal_value = true,
-  match_block = true,
-  match_arm = true,
-  case_clause = true,
-  case_item = true,
-  elif_clause = true,
-  elseif_clause = true,
-  else_clause = true,
-  except_clause = true,
-  finally_clause = true,
-  catch_clause = true,
-  then_clause = true,
-  subshell = true,
-  rule_set = true,
-  media_statement = true,
-  keyframes_statement = true,
-  supports_statement = true,
-  element = true,
-  script_element = true,
-  style_element = true,
-  template_element = true,
-  block_mapping = true,
-  block_sequence = true,
-  container_decl = true,
-  ui_object_definition = true,
-  ui_object_initializer = true,
-  object_definition = true,
-  component = true,
-  jsx_element = true,
-  jsx_fragment = true,
-  jsx_self_closing_element = true,
-  jsx_opening_element = true,
-  jsx_closing_element = true,
-  jsx_expression = true,
-  arrow_function = true,
-  function_expression = true,
-  closure_expression = true,
-  func_literal = true,
-  with_statement = true,
-  async_with_statement = true,
-  try_statement = true,
-  match_statement = true,
-  match_expression = true,
-  impl_item = true,
-  trait_item = true,
-  mod_item = true,
-  struct_item = true,
-  enum_item = true,
-  select_statement = true,
-  type_switch_statement = true,
-  expression_switch_statement = true,
-  namespace_definition = true,
-  linkage_specification = true,
-  anonymous_function = true,
-  attrset_expression = true,
-  rec_attrset_expression = true,
-  let_expression = true,
-  Block = true,
-  InitList = true,
-  SwitchExpr = true,
-  SwitchProng = true,
-  async_block = true,
-  constructor_body = true,
-  lambda = true,
-  lambda_expression = true,
-  list_comprehension = true,
-  dictionary_comprehension = true,
-  set_comprehension = true,
-  generator_expression = true,
-  template_substitution = true,
-}
-
---- AST parent header construct node types
-M.HEADER_CONTAINER_TYPES = {
-  assignment_statement = true,
-  variable_declaration = true,
-  local_declaration = true,
-  lexical_declaration = true,
-  variable_declarator = true,
-  function_declaration = true,
-  function_definition = true,
-  function_item = true,
-  arrow_function = true,
-  function_expression = true,
-  method_definition = true,
-  method_declaration = true,
-  constructor_declaration = true,
-  generator_function = true,
-  async_function_definition = true,
-  class_declaration = true,
-  class_definition = true,
-  class_specifier = true,
-  class = true,
-  interface_declaration = true,
-  enum_declaration = true,
-  enum_specifier = true,
-  enum_item = true,
-  struct_specifier = true,
-  struct_item = true,
-  union_specifier = true,
-  union_item = true,
-  type_declaration = true,
-  type_spec = true,
-  template_declaration = true,
-  namespace_definition = true,
-  linkage_specification = true,
-  method = true,
-  singleton_method = true,
-}
-
---- AST clause container types
-M.CLAUSE_CONTAINER_TYPES = {
-  elif_clause = true,
-  elseif_clause = true,
-  else_clause = true,
-  except_clause = true,
-  finally_clause = true,
-  catch_clause = true,
-  case_clause = true,
-  case_item = true,
-  match_arm = true,
-}
-
---- AST delimiter node types for scope openers
---- AST delimiter node types for scope openers
-M.OPEN_DELIMITER_TYPES = {
-  ["{"] = true, ["("] = true, ["["] = true, [":"] = true,
-  ["<"] = true, ["<?php"] = true, ["<?"] = true,
-  ["do"] = true, ["then"] = true, ["begin"] = true, ["function"] = true,
-  ["func"] = true, ["fn"] = true, ["fun"] = true, ["def"] = true, ["defp"] = true,
-  ["defmodule"] = true, ["defmacro"] = true, ["defprotocol"] = true, ["defimpl"] = true,
-  ["class"] = true, ["struct"] = true, ["enum"] = true, ["union"] = true,
-  ["interface"] = true, ["trait"] = true, ["impl"] = true, ["module"] = true,
-  ["namespace"] = true, ["package"] = true, ["type"] = true,
-  ["if"] = true, ["elseif"] = true, ["elif"] = true, ["elsif"] = true, ["else"] = true,
-  ["for"] = true, ["foreach"] = true, ["while"] = true, ["repeat"] = true, ["until"] = true,
-  ["loop"] = true, ["match"] = true, ["switch"] = true, ["case"] = true,
-  ["select"] = true, ["try"] = true, ["catch"] = true, ["except"] = true,
-  ["finally"] = true, ["rescue"] = true, ["ensure"] = true, ["unless"] = true,
-  ["with"] = true, ["where"] = true, ["defer"] = true,
-  ["when"] = true, ["of"] = true, ["guard"] = true,
-  ["proc"] = true, ["method"] = true, ["iterator"] = true, ["macro"] = true,
-  ["template"] = true, ["concept"] = true, ["record"] = true, ["cond"] = true,
-  ["receive"] = true, ["test"] = true, ["=>"] = true, ["->"] = true, [":="] = true,
-  ["</"] = true, ["/>"] = true,
-  ["function_keyword"] = true, ["def_keyword"] = true, ["class_keyword"] = true,
-  ["if_keyword"] = true, ["for_keyword"] = true, ["while_keyword"] = true,
-  ["try_keyword"] = true, ["catch_keyword"] = true, ["struct_keyword"] = true,
-  ["enum_keyword"] = true, ["interface_keyword"] = true, ["trait_keyword"] = true,
-  ["fn_keyword"] = true, ["type_keyword"] = true, ["opening_element"] = true,
-}
-
---- AST delimiter node types for scope closers
-M.CLOSE_DELIMITER_TYPES = {
-  ["}"] = true, [")"] = true, ["]"] = true, [">"] = true, ["?>"] = true,
-  ["end"] = true, ["done"] = true, ["fi"] = true, ["esac"] = true,
-  ["endfunction"] = true, ["endif"] = true, ["endfor"] = true, ["endforeach"] = true,
-  ["endwhile"] = true, ["endswitch"] = true, ["enddeclare"] = true,
-  ["endclass"] = true, ["endmodule"] = true, ["endinterface"] = true,
-  ["endtry"] = true, ["endstruct"] = true,
-  ["rescue"] = true, ["ensure"] = true, ["catch"] = true, ["finally"] = true,
-  ["except"] = true, ["else"] = true, ["elif"] = true, ["elseif"] = true,
-  ["elsif"] = true, ["until"] = true, ["/>"] = true, ["</"] = true,
-  ["end_keyword"] = true, ["closing_element"] = true, ["close_tag"] = true,
-}
-
-local FT_OPEN_KEYWORDS = {
-  lua = { "function", "if", "elseif", "else", "for", "while", "repeat", "until", "do", "then" },
-  python = { "def", "class", "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "match", "case", "async" },
-  rust = { "fn", "impl", "struct", "enum", "union", "trait", "mod", "if", "else", "for", "while", "loop", "match", "async", "unsafe" },
-  go = { "func", "type", "struct", "interface", "if", "else", "for", "switch", "case", "select", "defer" },
-  c = { "if", "else", "for", "while", "do", "switch", "case", "struct", "union", "enum" },
-  cpp = { "if", "else", "for", "while", "do", "switch", "case", "struct", "union", "enum", "class", "namespace", "template", "try", "catch" },
-  javascript = { "function", "class", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally", "async" },
-  typescript = { "function", "class", "interface", "type", "enum", "namespace", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally", "async" },
-  typescriptreact = { "function", "class", "interface", "type", "enum", "namespace", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally", "async" },
-  javascriptreact = { "function", "class", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally", "async" },
-  ruby = { "def", "class", "module", "if", "elsif", "else", "unless", "while", "until", "for", "do", "begin", "rescue", "ensure", "case", "when" },
-  elixir = { "def", "defp", "defmodule", "defmacro", "defprotocol", "defimpl", "if", "unless", "cond", "case", "with", "fn", "do", "try", "receive" },
-  sh = { "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "case", "esac", "function" },
-  bash = { "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "case", "esac", "function" },
-  zsh = { "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "case", "esac", "function" },
-  php = { "function", "fn", "class", "trait", "interface", "enum", "if", "elseif", "else", "for", "foreach", "while", "do", "switch", "case", "try", "catch", "finally", "match" },
-  zig = { "fn", "struct", "enum", "union", "error", "test", "if", "else", "for", "while", "switch", "comptime" },
-  nim = { "proc", "func", "method", "iterator", "macro", "template", "type", "if", "elif", "else", "for", "while", "try", "except", "finally", "block", "case", "when" },
-  haskell = { "data", "type", "newtype", "class", "instance", "where", "let", "in", "do", "case", "of", "if", "then", "else" },
-  java = { "class", "interface", "enum", "if", "else", "for", "while", "do", "switch", "case", "try", "catch", "finally" },
-  kotlin = { "fun", "class", "interface", "object", "enum", "if", "else", "for", "while", "do", "when", "try", "catch", "finally" },
-}
-
-local FT_CLOSE_KEYWORDS = {
-  lua = { "end", "until", "else", "elseif" },
-  ruby = { "end", "until", "else", "elsif", "rescue", "ensure" },
-  elixir = { "end", "else", "catch", "after", "rescue" },
-  sh = { "fi", "esac", "done", "else", "elif" },
-  bash = { "fi", "esac", "done", "else", "elif" },
-  zsh = { "fi", "esac", "done", "else", "elif" },
-  php = { "endfunction", "endif", "endfor", "endforeach", "endwhile", "endswitch", "enddeclare", "else", "elseif", "catch", "finally" },
-  python = { "elif", "else", "except", "finally" },
-}
-
-local OPEN_KEYWORDS = {
-  "for", "foreach", "while", "if", "elseif", "elif", "elsif", "else", "repeat", "until",
-  "do", "then", "begin", "function", "func", "fn", "fun", "def", "defp", "defmodule",
-  "defmacro", "defprotocol", "defimpl", "class", "struct", "enum", "union", "interface",
-  "trait", "impl", "module", "namespace", "package", "type", "switch", "case", "select",
-  "try", "catch", "except", "finally", "rescue", "ensure", "unless", "with", "where",
-  "loop", "match", "cond", "receive"
-}
-
-local CLOSE_KEYWORDS = {
-  "end", "done", "fi", "esac", "rescue", "ensure", "until", "endif", "endfunction",
-  "endfor", "endforeach", "endwhile", "endswitch", "enddeclare", "endclass", "endmodule",
-  "endinterface", "endtry", "endstruct", "else", "elif", "elseif", "elsif", "catch", "finally", "except"
-}
-
-local OPEN_CHARS = { ["{"] = true, ["["] = true, ["("] = true }
-local CLOSE_CHARS = { ["}"] = true, ["]"] = true, [")"] = true }
-
---- Traverses upward from cursor row to find scope start row.
+--- Resolves scope boundaries using Treesitter AST traversal.
 ---@param buf integer Buffer handle
----@param cursor_row integer Cursor row (1-indexed)
----@param active_col integer Active guide column
----@param limit integer Active col limit threshold
----@param tabstop integer Tabstop width
----@return integer Scope start row (1-indexed)
-local function search_scope_start(buf, cursor_row, active_col, limit, tabstop)
-  local ok_cur, cur_lines = pcall(nvim_buf_get_lines, buf, cursor_row - 1, cursor_row, false)
-  if ok_cur and cur_lines and cur_lines[1] then
-    local cl = cur_lines[1]
-    local cl_lead = cl:match("^%s*")
-    if cl ~= "" and cl_lead ~= cl then
-      if utils.lead_display_width(cl_lead, tabstop) == active_col then
-        return cursor_row
-      end
-    end
+---@param win integer Window handle
+---@return integer|nil scope_start 1-indexed row
+---@return integer|nil scope_end 1-indexed row
+---@return integer|nil active_col Indent column
+function M.get_treesitter_scope(buf, win)
+  if not buf or not win or not nvim_buf_is_valid(buf) or not nvim_win_is_valid(win) then
+    return nil, nil, nil
   end
 
-  local current = cursor_row - 1
-  local scope_start = cursor_row
-  local crossed_blank = false
-
-  while current > 0 do
-    local chunk_start = math.max(1, current - 50 + 1)
-    local ok, lines = pcall(nvim_buf_get_lines, buf, chunk_start - 1, current, false)
-    if not ok or #lines == 0 then
-      break
-    end
-
-    local stopped = false
-    for i = #lines, 1, -1 do
-      local idx = chunk_start + i - 1
-      local text = lines[i]
-      local lead = text:match("^%s*")
-      if text == "" or lead == text then
-        crossed_blank = true
-      else
-        local disp = utils.lead_display_width(lead, tabstop)
-        if disp < limit then
-          if not crossed_blank then
-            scope_start = (disp == active_col) and idx or (idx + 1)
-          end
-          stopped = true
-          break
-        end
-        crossed_blank = false
-      end
-    end
-    if stopped then
-      break
-    end
-    scope_start = chunk_start
-    current = chunk_start - 1
+  if not vim.treesitter or not vim.treesitter.get_parser then
+    return nil, nil, nil
   end
 
-  return scope_start
-end
-
---- Traverses downward from cursor row to find scope end row.
----@param buf integer Buffer handle
----@param cursor_row integer Cursor row (1-indexed)
----@param line_count integer Total line count in buffer
----@param active_col integer Active guide column threshold
----@param limit integer Active col limit threshold
----@param tabstop integer Tabstop width
----@param ft string|nil Optional filetype
----@return integer Scope end row (1-indexed)
-local function search_scope_end(buf, cursor_row, line_count, active_col, limit, tabstop, ft)
-  local current = cursor_row + 1
-  local scope_end = cursor_row
-
-  while current <= line_count do
-    local chunk_end = math.min(line_count, current + 50 - 1)
-    local ok, lines = pcall(nvim_buf_get_lines, buf, current - 1, chunk_end, false)
-    if not ok or #lines == 0 then
-      break
-    end
-
-    local stopped = false
-    for i = 1, #lines do
-      local idx = current + i - 1
-      local text = lines[i]
-      local lead = text:match("^%s*")
-      if text ~= "" and lead ~= text then
-        local disp = utils.lead_display_width(lead, tabstop)
-        if disp < limit then
-          if disp == active_col then
-            local delims = M.find_delimiters(text, false, ft)
-            if #delims > 0 then
-              scope_end = idx
-            else
-              scope_end = idx - 1
-            end
-          else
-            scope_end = idx - 1
-          end
-          stopped = true
-          break
-        end
-      end
-    end
-    if stopped then
-      break
-    end
-    scope_end = chunk_end
-    current = chunk_end + 1
+  local ok_p, parser = pcall(vim.treesitter.get_parser, buf)
+  if not ok_p or not parser then
+    return nil, nil, nil
   end
 
-  return scope_end
-end
+  pcall(function() parser:parse() end)
 
---- Trims trailing blank lines from scope end boundary.
----@param buf integer Buffer handle
----@param scope_start integer Scope start row (1-indexed)
----@param scope_end integer Scope end row (1-indexed)
----@param cursor_row integer Cursor row (1-indexed)
----@return integer Trimmed scope end row
-local function trim_scope_end(buf, scope_start, scope_end, cursor_row)
-  if scope_end <= scope_start then
-    return scope_end
-  end
+  local cursor = nvim_win_get_cursor(win)
+  local row = cursor[1] - 1
+  local col = cursor[2]
 
-  local pre_trim_end = scope_end
-  local check_count = math.min(50, scope_end - scope_start)
-  local check_start = scope_end - check_count + 1
-
-  local ok_b, trim_lines = pcall(nvim_buf_get_lines, buf, check_start - 1, scope_end, false)
-  if ok_b and trim_lines and #trim_lines > 0 then
-    for idx = #trim_lines, 1, -1 do
-      local t = trim_lines[idx]
-      if t == "" or t:match("^%s*$") then
-        scope_end = scope_end - 1
-      else
-        break
-      end
-      if scope_end <= scope_start then
-        break
-      end
-    end
-  end
-
-  if scope_end < cursor_row and cursor_row <= pre_trim_end then
-    scope_end = cursor_row
-  end
-
-  return scope_end
-end
-
---- Determines start and end rows of active block scope using indentation analysis.
----@param buf integer Buffer handle
----@param cursor_row integer Cursor line row (1-indexed)
----@param active_col integer Active guide column index
----@param width integer Indentation width
----@param tabstop integer Tabstop size
----@param ft string|nil Optional filetype
----@return integer|nil scope_start (1-indexed)
----@return integer|nil scope_end (1-indexed)
-function M.get_scope_range(buf, cursor_row, active_col, width, tabstop, ft)
-  if not buf or not api.nvim_buf_is_valid(buf) then
-    return nil, nil
-  end
-
-  local line_count = nvim_buf_line_count(buf)
-  if line_count == 0 or not active_col then
-    return nil, nil
-  end
-
-  ft = ft or (api.nvim_get_option_value and api.nvim_get_option_value("filetype", { buf = buf }))
-
-  cursor_row = math.min(math.max(1, cursor_row or 1), line_count)
-
-  local limit = active_col + width
-  local scope_start = search_scope_start(buf, cursor_row, active_col, limit, tabstop)
-  local scope_end = search_scope_end(buf, cursor_row, line_count, active_col, limit, tabstop, ft)
-  scope_end = trim_scope_end(buf, scope_start, scope_end, cursor_row)
-
-  return scope_start, scope_end
-end
-
---- Resolves target Treesitter node at given cursor position.
----@param parser userdata Treesitter parser
----@param buf integer Buffer handle
----@param cursor_row integer 0-indexed row
----@param cursor_col integer 0-indexed col
----@return userdata|nil Treesitter node
-local function resolve_ts_node(parser, buf, cursor_row, cursor_col)
   local node = nil
-
-  -- Safely inspect injected language trees
-  pcall(function()
-    if parser.for_each_tree then
-      parser:for_each_tree(function(tree, ltree)
-        if tree and ltree then
-          local root = tree:root()
-          if root then
-            local r_s, _, r_e, _ = root:range()
-            if cursor_row >= r_s and cursor_row <= r_e then
-              local n = root:named_descendant_for_range(cursor_row, cursor_col, cursor_row, cursor_col)
-              if n then
-                node = n
-              end
-            end
-          end
-        end
-      end)
-    end
-  end)
-
-  if not node and vim.treesitter.get_node then
-    local ok_n, n = pcall(vim.treesitter.get_node, { bufnr = buf, buf = buf, pos = { cursor_row, cursor_col } })
+  if vim.treesitter.get_node then
+    local ok_n, n = pcall(vim.treesitter.get_node, { bufnr = buf, pos = { row, col } })
     if ok_n then
       node = n
     end
@@ -557,265 +66,208 @@ local function resolve_ts_node(parser, buf, cursor_row, cursor_col)
       local root = trees[1]:root()
       if root then
         pcall(function()
-          node = root:named_descendant_for_range(cursor_row, cursor_col, cursor_row, cursor_col)
+          node = root:named_descendant_for_range(row, col, row, col)
         end)
       end
     end
   end
 
-  return node
-end
-
---- Determines scope range and active guide column using Treesitter AST.
----@param buf integer Buffer handle
----@param win integer Window handle
----@param width integer Default indentation width
----@param tabstop integer Tabstop size
----@return integer|nil scope_start (1-indexed)
----@return integer|nil scope_end (1-indexed)
----@return integer|nil active_col
----@return userdata|nil scope_node
-function M.get_treesitter_scope_range(buf, win, width, tabstop)
-  if not buf or not win or not api.nvim_buf_is_valid(buf) or not api.nvim_win_is_valid(win) then
-    return nil, nil, nil, nil
-  end
-
-  if not vim.treesitter or not vim.treesitter.get_parser then
-    return nil, nil, nil, nil
-  end
-
-  local ok_p, parser = pcall(vim.treesitter.get_parser, buf)
-  if not ok_p or not parser then
-    return nil, nil, nil, nil
-  end
-
-  pcall(function() parser:parse() end)
-
-  local cursor = nvim_win_get_cursor(win)
-  local cursor_row = cursor[1] - 1
-  local cursor_col = cursor[2]
-
-  local node = resolve_ts_node(parser, buf, cursor_row, cursor_col)
   if not node then
-    return nil, nil, nil, nil
+    return nil, nil, nil
   end
 
-  -- Traverse upward through ancestor nodes for multi-line scope container
-  local scope_node = nil
+  -- Traverse upward to find enclosing multi-line scope node
   local curr = node
+  local scope_node = nil
   while curr do
     local type_name = curr:type()
-    if not M.IGNORE_AST_TYPES[type_name] then
-      local s_row, _, e_row, _ = curr:range()
-      if s_row < e_row and not M.ROOT_AST_TYPES[type_name] then
-        if not M.BODY_CONTAINER_TYPES[type_name] then
-          scope_node = curr
-          break
-        end
-      end
-    end
-    curr = curr:parent()
-  end
+    local s_row, _, e_row, _ = curr:range()
+    local parent = curr:parent()
 
-  if not scope_node then
-    return nil, nil, nil, nil
-  end
-
-  local s_row_scope = scope_node:range()
-  local header_node = nil
-  local parent_node = scope_node:parent()
-  while parent_node do
-    local p_type = parent_node:type()
-    if M.ROOT_AST_TYPES[p_type] then break end
-    if M.HEADER_CONTAINER_TYPES[p_type] then
-      local p_s, _, p_e, _ = parent_node:range()
-      if p_s == s_row_scope and p_s < p_e then
-        header_node = parent_node
+    -- Only consider multi-line nodes that are nested inside non-root parents
+    if s_row < e_row and not ROOT_AST_TYPES[type_name] then
+      if parent and not ROOT_AST_TYPES[parent:type()] then
+        scope_node = curr
         break
       end
     end
-    parent_node = parent_node:parent()
+    curr = parent
   end
 
-  local start_row = (header_node and header_node:range() or scope_node:range())
-  local _, _, end_row, _ = scope_node:range()
-  local scope_start = start_row + 1
-  local scope_end = end_row + 1
-
-  local active_col = 0
-  local target_row = (header_node and header_node:range()) or start_row
-  local ok_l, lines = pcall(nvim_buf_get_lines, buf, target_row, target_row + 1, false)
-  if ok_l and lines and lines[1] then
-    local lead = lines[1]:match("^%s*")
-    local hdr_indent = utils.lead_display_width(lead or "", tabstop)
-    active_col = hdr_indent
-  end
-
-  return scope_start, scope_end, active_col, scope_node
-end
-
---- Recursively collects leaf delimiter nodes matching valid_types on target_row.
----@param node userdata TSNode
----@param target_row integer 0-indexed line row
----@param valid_types table<string, boolean>
----@param matches integer[][] Array of { s_col, e_col }
----@param visited table<string, boolean>
-local function collect_leaf_delimiters(node, target_row, valid_types, matches, visited)
-  if not node then return end
-  local ok_id, id = pcall(function() return node:id() end)
-  id = (ok_id and tostring(id)) or tostring(node)
-  if visited[id] then return end
-  visited[id] = true
-
-  local type_name = node:type()
-  if M.IGNORE_AST_TYPES[type_name] then return end
-
-  local s_row, s_col, e_row, e_col = node:range()
-  if s_row > target_row or e_row < target_row then return end
-
-  local child_count = node:child_count()
-  if child_count == 0 then
-    if s_row == target_row and e_row == target_row and valid_types[type_name] then
-      local parent = node:parent()
-      local parent_type = parent and parent:type() or ""
-      if parent_type ~= "parameters" and parent_type ~= "parameter"
-         and parent_type ~= "argument_list" and parent_type ~= "identifier"
-         and parent_type ~= "variable_declarator" and parent_type ~= "assignment_statement"
-         and type_name ~= "identifier" and type_name ~= "field_identifier"
-         and type_name ~= "property_identifier" then
-        table.insert(matches, { s_col, e_col })
-      end
-    end
-  else
-    for i = 0, child_count - 1 do
-      local child = node:child(i)
-      if child then
-        collect_leaf_delimiters(child, target_row, valid_types, matches, visited)
-      end
-    end
-  end
-end
-
---- Extracts delimiter byte ranges from Treesitter AST nodes on target_row.
----@param scope_node userdata|nil Treesitter TSNode
----@param target_row integer 0-indexed line row
----@param is_start boolean True for scope start line, false for end line
----@return integer[][] List of { s_col, e_col }
-function M.get_treesitter_delimiters(scope_node, target_row, is_start)
   if not scope_node then
-    return {}
+    return nil, nil, nil
   end
 
-  local target_node = scope_node
-  if is_start then
-    local parent = scope_node:parent()
-    while parent do
-      local p_type = parent:type()
-      if M.ROOT_AST_TYPES[p_type] then break end
-      if M.HEADER_CONTAINER_TYPES[p_type] then
-        local p_s, _, p_e, _ = parent:range()
-        if p_s <= target_row and p_e >= target_row then
-          target_node = parent
-          break
-        end
+  -- Check if parent of scope_node (e.g. if_statement, function_declaration) extends to header construct
+  local parent = scope_node:parent()
+  if parent and not ROOT_AST_TYPES[parent:type()] then
+    local p_s_row, _, p_e_row, _ = parent:range()
+    if p_s_row < p_e_row then
+      local grandparent = parent:parent()
+      if grandparent and not ROOT_AST_TYPES[grandparent:type()] then
+        scope_node = parent
       end
-      parent = parent:parent()
     end
   end
 
-  local raw_matches = {}
-  local valid_types = is_start and M.OPEN_DELIMITER_TYPES or M.CLOSE_DELIMITER_TYPES
-  local visited = {}
+  local s_row, _, e_row, _ = scope_node:range()
+  local scope_start = s_row + 1
+  local scope_end = e_row + 1
 
-  collect_leaf_delimiters(target_node, target_row, valid_types, raw_matches, visited)
-
-  local unique = {}
-  local matches = {}
-  for _, m in ipairs(raw_matches) do
-    local key = m[1] .. ":" .. m[2]
-    if not unique[key] then
-      unique[key] = true
-      table.insert(matches, m)
-    end
+  -- Calculate indentation column of scope start line
+  local tabstop = utils.buffer_tabstop(buf)
+  local active_col = 0
+  local ok_l, lines = pcall(nvim_buf_get_lines, buf, s_row, s_row + 1, false)
+  if ok_l and lines and lines[1] then
+    local lead = lines[1]:match("^%s*") or ""
+    active_col = utils.lead_display_width(lead, tabstop)
   end
-  table.sort(matches, function(a, b) return a[1] < b[1] end)
 
-  return matches
+  return scope_start, scope_end, active_col
 end
 
---- Sanitizes line text by masking string literals and stripping comments based on filetype.
----@param line_text string Raw line text
----@param ft string|nil Filetype string
----@return string Sanitized line text
-local function sanitize_line(line_text, ft)
-  if not line_text or line_text == "" then
-    return ""
+--- Resolves scope boundaries using indentation level scanning.
+---@param buf integer Buffer handle
+---@param win integer Window handle
+---@return integer|nil scope_start 1-indexed row
+---@return integer|nil scope_end 1-indexed row
+---@return integer|nil active_col Indent column
+function M.get_indent_scope(buf, win)
+  if not buf or not win or not nvim_buf_is_valid(buf) or not nvim_win_is_valid(win) then
+    return nil, nil, nil
   end
 
-  local clean = line_text:gsub('\\"', "  "):gsub("\\'", "  "):gsub("\\`", "  ")
-  clean = clean:gsub('"[^"]*"', function(m) return string.rep(" ", #m) end)
-  clean = clean:gsub("'[^']*'", function(m) return string.rep(" ", #m) end)
-  clean = clean:gsub("`[^`]*`", function(m) return string.rep(" ", #m) end)
-  clean = clean:gsub("/%*.-%*/", function(m) return string.rep(" ", #m) end)
-  clean = clean:gsub("<!%-%-.-%-%->", function(m) return string.rep(" ", #m) end)
-
-  local prefixes = utils.get_comment_prefixes(ft)
-  for _, prefix in ipairs(prefixes) do
-    clean = clean:gsub(prefix .. ".*$", "")
+  local line_count = nvim_buf_line_count(buf)
+  if line_count == 0 then
+    return nil, nil, nil
   end
 
-  return clean
+  local cursor = nvim_win_get_cursor(win)
+  local cursor_row = math.min(math.max(1, cursor[1]), line_count)
+
+  local ok_l, lines = pcall(nvim_buf_get_lines, buf, cursor_row - 1, cursor_row, false)
+  if not ok_l or not lines or not lines[1] then
+    return nil, nil, nil
+  end
+
+  local text = lines[1]
+  local lead = text:match("^%s*")
+  local target_row = cursor_row
+
+  -- If current line is blank, find nearest non-blank line
+  if text == "" or lead == text then
+    local up_text, up_lead, up_row = utils.find_non_blank_up(buf, cursor_row - 1)
+    if up_text and up_lead then
+      text = up_text
+      lead = up_lead
+      target_row = up_row
+    else
+      local down_text, down_lead, down_row = utils.find_non_blank_down(buf, cursor_row + 1, line_count)
+      if down_text and down_lead then
+        text = down_text
+        lead = down_lead
+        target_row = down_row
+      end
+    end
+  end
+
+  if text == "" or lead == text then
+    return nil, nil, nil
+  end
+
+  local width = utils.indent_width(buf)
+  local tabstop = utils.buffer_tabstop(buf)
+  local display_col = utils.lead_display_width(lead, tabstop)
+  local aligned = math.floor(display_col / width) * width
+
+  -- Determine active column based on block header vs inner body
+  local next_aligned = nil
+  local next_text, next_lead = utils.find_non_blank_down(buf, target_row + 1, line_count)
+  if next_text and next_lead then
+    local next_disp = utils.lead_display_width(next_lead, tabstop)
+    next_aligned = math.floor(next_disp / width) * width
+  end
+
+  local active_col = aligned
+  if not (next_aligned and next_aligned > aligned) then
+    active_col = math.max(0, aligned - width)
+  end
+
+  local limit = active_col + width
+
+  -- Scan upward for scope start
+  local scope_start = target_row
+  local curr_up = target_row - 1
+  while curr_up > 0 do
+    local ok_u, u_lines = pcall(nvim_buf_get_lines, buf, curr_up - 1, curr_up, false)
+    if not ok_u or not u_lines or not u_lines[1] then break end
+    local u_text = u_lines[1]
+    local u_lead = u_text:match("^%s*")
+    if u_text ~= "" and u_lead ~= u_text then
+      local u_disp = utils.lead_display_width(u_lead, tabstop)
+      if u_disp < limit then
+        scope_start = (u_disp == active_col) and curr_up or (curr_up + 1)
+        break
+      end
+    end
+    scope_start = curr_up
+    curr_up = curr_up - 1
+  end
+
+  -- Scan downward for scope end
+  local scope_end = target_row
+  local curr_down = target_row + 1
+  while curr_down <= line_count do
+    local ok_d, d_lines = pcall(nvim_buf_get_lines, buf, curr_down - 1, curr_down, false)
+    if not ok_d or not d_lines or not d_lines[1] then break end
+    local d_text = d_lines[1]
+    local d_lead = d_text:match("^%s*")
+    if d_text ~= "" and d_lead ~= d_text then
+      local d_disp = utils.lead_display_width(d_lead, tabstop)
+      if d_disp < limit then
+        scope_end = (d_disp == active_col) and curr_down or (curr_down - 1)
+        break
+      end
+    end
+    scope_end = curr_down
+    curr_down = curr_down + 1
+  end
+
+  -- Trim trailing blank lines from scope end
+  while scope_end > scope_start do
+    local ok_t, t_lines = pcall(nvim_buf_get_lines, buf, scope_end - 1, scope_end, false)
+    if ok_t and t_lines and t_lines[1] and t_lines[1]:match("^%s*$") then
+      scope_end = scope_end - 1
+    else
+      break
+    end
+  end
+
+  return scope_start, scope_end, active_col
 end
 
---- Finds delimiter byte ranges on line_text using regex pattern matching.
----@param line_text string Raw line text
----@param is_start boolean True for start line, false for end line
----@param ft string|nil Optional filetype string for comment sanitization
----@return integer[][] List of { s_col, e_col }
-function M.find_delimiters(line_text, is_start, ft)
-  if not line_text or line_text == "" then
-    return {}
+--- Primary scope resolution dispatcher.
+---@param buf integer Buffer handle
+---@param win integer Window handle
+---@param use_treesitter boolean Whether Treesitter scope is enabled
+---@return integer|nil scope_start
+---@return integer|nil scope_end
+---@return integer|nil active_col
+function M.get_scope(buf, win, use_treesitter)
+  local start_row, end_row, active_col
+  if use_treesitter ~= false then
+    start_row, end_row, active_col = M.get_treesitter_scope(buf, win)
   end
 
-  local clean_text = sanitize_line(line_text, ft)
-  local keywords = (ft and FT_CLOSE_KEYWORDS[ft]) or CLOSE_KEYWORDS
-  if is_start then
-    keywords = (ft and FT_OPEN_KEYWORDS[ft]) or OPEN_KEYWORDS
-  end
-  local char_map = is_start and OPEN_CHARS or CLOSE_CHARS
-  local raw_matches = {}
-
-  for _, kw in ipairs(keywords) do
-    local init_pos = 1
-    local pat = "%f[%w_]" .. kw .. "%f[%W]"
-    while init_pos <= #clean_text do
-      local s, e = clean_text:find(pat, init_pos)
-      if not s then break end
-      table.insert(raw_matches, { s - 1, e })
-      init_pos = e + 1
-    end
+  if not start_row or not end_row or not active_col then
+    start_row, end_row, active_col = M.get_indent_scope(buf, win)
   end
 
-  local len = #clean_text
-  for col = 1, len do
-    local char = clean_text:sub(col, col)
-    if char_map[char] then
-      table.insert(raw_matches, { col - 1, col })
-    end
+  if start_row and end_row and active_col and active_col > 0 then
+    return start_row, end_row, active_col
   end
 
-  local unique = {}
-  local matches = {}
-  for _, m in ipairs(raw_matches) do
-    local key = m[1] .. ":" .. m[2]
-    if not unique[key] then
-      unique[key] = true
-      table.insert(matches, m)
-    end
-  end
-  table.sort(matches, function(a, b) return a[1] < b[1] end)
-
-  return matches
+  return nil, nil, nil
 end
 
 return M
