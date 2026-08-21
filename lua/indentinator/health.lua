@@ -34,13 +34,17 @@ function M.check()
   local c = ind.config
   local ind_cfg = c.indent or {}
   local scope_cfg = c.scope or {}
+  local rainbow_cfg = ind_cfg.rainbow or {}
 
-  health.info(("enabled=%s priority=%s"):format(tostring(c.enabled), tostring(c.priority)))
-  health.info(("indent.enabled=%s indent.char=%q indent.hl=%s"):format(
-    tostring(ind_cfg.enabled), tostring(ind_cfg.char), tostring(ind_cfg.hl)
+  health.info(("enabled=%s debounce_ms=%d priority=%s"):format(
+    tostring(c.enabled), c.debounce_ms or 0, tostring(c.priority)
   ))
-  health.info(("scope.enabled=%s scope.char=%q scope.hl=%s scope.treesitter=%s"):format(
-    tostring(scope_cfg.enabled), tostring(scope_cfg.char), tostring(scope_cfg.hl), tostring(scope_cfg.treesitter)
+  health.info(("indent.enabled=%s indent.char=%q indent.hl=%s rainbow.enabled=%s"):format(
+    tostring(ind_cfg.enabled), tostring(ind_cfg.char), tostring(ind_cfg.hl), tostring(rainbow_cfg.enabled)
+  ))
+  health.info(("scope.enabled=%s scope.char=%q corners=%s (top=%q, bot=%q) scope.treesitter=%s"):format(
+    tostring(scope_cfg.enabled), tostring(scope_cfg.char), tostring(scope_cfg.corners),
+    tostring(scope_cfg.char_top), tostring(scope_cfg.char_bottom), tostring(scope_cfg.treesitter)
   ))
 
   if scope_cfg.treesitter then

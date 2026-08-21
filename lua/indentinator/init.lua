@@ -1,5 +1,5 @@
 --- Main entry point and facade for indentinator.nvim.
---- Handles plugin setup, scope navigation API, and event listeners.
+--- Handles plugin setup, scope navigation API, debounced rendering, and event listeners.
 
 local config = require("indentinator.config")
 local state_mod = require("indentinator.state")
@@ -18,6 +18,8 @@ local nvim_list_wins = api.nvim_list_wins
 local M = {}
 
 local AUGROUP = "Indentinator"
+local uv = vim.uv or vim.loop
+local render_timer = nil
 
 --- Active plugin configuration reference
 M.config = config.values
@@ -35,11 +37,34 @@ local function for_each_active_win(fn)
   end
 end
 
+--- Debounced render trigger for frequent events (CursorMoved, WinScrolled)
+---@param buf integer Buffer handle
+---@param win integer Window handle
+local function debounced_render(buf, win)
+  local delay = config.values.debounce_ms or 0
+  if delay <= 0 then
+    render.render(buf, win)
+    return
+  end
+
+  if render_timer then
+    pcall(function() render_timer:stop() end)
+  else
+    render_timer = uv.new_timer()
+  end
+
+  render_timer:start(delay, 0, vim.schedule_wrap(function()
+    if nvim_win_is_valid(win) then
+      render.render(buf, win)
+    end
+  end))
+end
+
 --- Registers autocommands for cursor movements, buffer lifecycle, and window resizes.
 local function setup_autocmds()
   api.nvim_create_augroup(AUGROUP, { clear = true })
 
-  -- Cursor movement updates active scope guide
+  -- Cursor movement updates active scope guide (debounced)
   api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
     group = AUGROUP,
     callback = function()
@@ -47,7 +72,7 @@ local function setup_autocmds()
       if nvim_win_is_valid(win) then
         local ok_b, buf = pcall(nvim_win_get_buf, win)
         if ok_b and buf then
-          render.render(buf, win)
+          debounced_render(buf, win)
         end
       end
     end,
@@ -61,7 +86,7 @@ local function setup_autocmds()
       if nvim_win_is_valid(win) then
         local ok_b, buf = pcall(nvim_win_get_buf, win)
         if ok_b and buf then
-          render.render(buf, win)
+          debounced_render(buf, win)
         end
       end
     end,
