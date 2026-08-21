@@ -2,3 +2,4 @@ result
 *.log
 .direnv/
 .envrc
+Session.vim

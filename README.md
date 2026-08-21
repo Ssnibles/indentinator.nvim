@@ -1,32 +1,22 @@
 # indentinator.nvim
 
-A lightweight, high-performance indentation guides plugin for Neovim. Written in pure Lua, it uses modern Neovim APIs to render guides efficiently:
-- Renders visible lines within the current window viewport only (unbounded file sizes cause no performance degradation).
-- Uses a single overlay extmark per line with `virt_text` chunks.
-- Avoids handle churn by reusing native libuv timer handles for event debouncing.
-- Skips invisible fold blocks using viewport jump-ahead logic and fold-enable guards.
-- Fast-path whitespace calculations and per-render-pass configuration caching.
+A lightweight, high-performance indentation and scope guides plugin for Neovim. Written in pure Lua, it renders standard indentation guides across all levels and highlights the active scope using modern Neovim extmarks and viewport-bounded rendering.
 
 ---
 
 ## Features
 
-- **Viewport-Bounded**: Only computes and paints guides for lines visible in the active viewport.
-- **Smart Guide Continuity**: Empty lines inherit guides from surrounding blocks (`smart = false`) or break them (`smart = true`).
-- **Scope Background & Highlight**: Highlights active block scope background (`background = true`), scope-start line text, and boundary delimiters.
-- **Scope Delimiter Highlighting**: Highlights scope start and end delimiters (braces, brackets, parentheses, and keywords like `function`, `if`, `end`, `def`) with customizable underlining (`underline_delimiters`).
-- **Rainbow Delimiters**: Distinct depth-based color cycling for nested scope delimiters (`rainbow_delimiters`).
-- **Treesitter Integration**: Optional AST-based scope resolution (`scope.treesitter = true`) with automatic fallback to indentation-based blocks.
-- **Corner Connectors**: Draw top (`┏` / `╭`) and bottom (`┗` / `╰`) corner characters with horizontal connectors (`━` / `─`) at scope boundaries.
-- **Scope Navigation**: Command `:IndentinatorScopeJump` to jump cursor to top or bottom of the active block.
-- **Statusline Integration**: Helper function `require("indentinator").statusline()` for Lualine/Heirline integration.
-- **Dynamic Overrides**: Customize options per filetype or exclude specific buffer types.
+- **Standard Indentation Guides**: Renders vertical guide lines across all indentation steps (`col 2, col 4, col 6, ...`).
+- **Active Scope Highlighting**: Dynamically highlights the active code scope line enclosing your cursor.
+- **Treesitter Integration (Default)**: Optional, enabled-by-default Treesitter AST scope resolution (`scope.treesitter = true`) with seamless fallback to indentation calculations.
+- **Viewport-Bounded**: Only computes and paints guides for lines visible in the active window.
+- **Minimal & Performant**: Clean Lua codebase with zero fluff, no heavy regex scanning, and lightweight autocommands.
 
 ---
 
 ## Requirements
 
-- Neovim 0.10+ (requires modern extmark overlay support).
+- Neovim 0.10+ (for modern extmark overlay support).
 
 ---
 
@@ -38,7 +28,15 @@ A lightweight, high-performance indentation guides plugin for Neovim. Written in
   "Ssnibles/indentinator.nvim",
   event = "BufReadPre",
   opts = {
-    -- Customise configuration here (see options below)
+    indent = {
+      enabled = true,
+      char = "│",
+    },
+    scope = {
+      enabled = true,
+      char = "│",
+      treesitter = true,
+    },
   }
 }
 ```
@@ -57,151 +55,68 @@ use {
 
 ## Commands
 
-- `:IndentinatorEnable` — Enable guides in the current buffer.
-- `:IndentinatorDisable` — Disable guides in the current buffer.
-- `:IndentinatorToggle` — Toggle guides in the current buffer (append `!` to toggle in all active buffers).
-- `:IndentinatorRainbowToggle` — Toggle rainbow scope delimiter highlighting.
-- `:IndentinatorScopeJump [top|bottom]` — Jump cursor to the top or bottom of the active scope block.
+- `:IndentinatorEnable` — Enable indent & scope guides in current buffer.
+- `:IndentinatorDisable` — Disable indent & scope guides in current buffer.
+- `:IndentinatorToggle` — Toggle indent & scope guides in current buffer (append `!` for all active buffers).
+- `:IndentinatorIndentToggle` — Toggle standard indentation guides.
+- `:IndentinatorScopeToggle` — Toggle active scope guide highlighting.
 - `:IndentinatorHealth` — Run configuration diagnostics.
-
----
-
-## Lua API & Statusline Integration
-
-- **`require("indentinator").get_current_scope(buf, win)`**:
-  Returns a table containing `{ scope_start = line_num, scope_end = line_num, active_col = col_idx }` or `nil`.
-- **`require("indentinator").jump_to_scope("top" | "bottom")`**:
-  Programmatically jump to the start or end of the current scope block.
-- **`require("indentinator").rainbow_delimiters(opts)`**:
-  Configure or toggle rainbow scope delimiters programmatically (`opts` can be table `{ enabled = true, rainbow_hls = {...}, underline = true }`, boolean, or buffer ID).
-- **`require("indentinator").toggle_rainbow_delimiters(buf)`**:
-  Toggle rainbow delimiters for a specific buffer or globally.
-- **`require("indentinator").statusline()`**:
-  Returns a statusline segment string (e.g. `"Scope: L10-L45"`).
-
-Example Lualine integration:
-```lua
-require("lualine").setup({
-  sections = {
-    lualine_x = { require("indentinator").statusline },
-  },
-})
-```
 
 ---
 
 ## Configuration
 
-Default settings can be overridden during the `setup` call:
+Default configuration settings:
 
 ```lua
 require("indentinator").setup({
-  enabled = true,                    -- Enable or disable guides globally
-  smart = false,                     -- Continue guides through blank lines (true to break them)
-  style = "thick",                   -- Preset style: "thick", "thin", "heavy", "double", "curved", "dashed", "dotted"
-  char = nil,                        -- Standard guide character (nil defaults to style preset, e.g. "│")
-  current_char = nil,                -- Active scope guide character (nil defaults to style preset, e.g. "┃")
-  char_hl = "IndentinatorGuide",     -- Highlight group for standard guides
-  gap_hl = "IndentinatorGap",        -- Highlight group for gaps (when draw_gap_hl is true)
-  draw_gap_hl = false,               -- Whether to highlight the span between guides
-  show_first_indent_level = true,    -- Draw guides at column 0
-  indent_width = nil,                -- Column step size (nil defaults to shiftwidth/tabstop)
-  priority = 100,                    -- Extmark priority level
+  enabled = true,        -- Enable plugin globally
+  priority = 100,        -- Extmark priority level
 
-  -- Active scope highlighting & border customization
+  -- Standard indentation guides across all levels
+  indent = {
+    enabled = true,             -- Render guides across all indent levels
+    char = "│",                 -- Standard guide character
+    hl = "IndentinatorIndent",  -- Highlight group for standard guides
+  },
+
+  -- Active scope guide highlighting
   scope = {
-    enabled = false,        -- highlight the guide at the cursor's active scope
-    range = "block",        -- "block" (current block only) or "global" (entire column)
-    background = false,     -- highlight scope block background: true/"block" (all lines), "boundaries" (top/bottom), or false
-    corner = true,          -- draw top/bottom corners at active scope boundaries
-    corner_top = nil,       -- custom top corner char (nil defaults to style preset, e.g. "┏" or "╭")
-    corner_bottom = nil,    -- custom bottom corner char (nil defaults to style preset, e.g. "┗" or "╰")
-    underline_char = nil,   -- custom horizontal connector character (nil defaults to style preset, e.g. "━" or "─")
-    text_highlight = true,  -- colour the text on the scope-start line
-    delimiters = false,     -- highlight scope boundary delimiters (braces, brackets, keywords like function/if/def/end)
-    underline_delimiters = true, -- whether to underline scope delimiters (set to false to disable underline)
-    rainbow_delimiters = false,   -- cycle rainbow highlight colors based on scope depth (or set scope.rainbow = true)
-    rainbow_hls = nil,       -- custom list of highlight group names for rainbow delimiters
-    treesitter = false,     -- use Treesitter for active scope detection (falls back to indentation)
+    enabled = true,             -- Highlight active scope guide line
+    char = "│",                 -- Active scope guide character
+    hl = "IndentinatorScope",   -- Highlight group for active scope guide
+    treesitter = true,          -- Use Treesitter for scope calculation
   },
 
-  current_char_hl = "IndentinatorCurrentGuide",     -- Highlight group for the active guide
-  scope_text_hl = "IndentinatorScopeText",           -- Highlight group for scope-start text
-  scope_bg_hl = "IndentinatorScopeBg",               -- Highlight group for active scope block background
-  scope_delimiter_hl = "IndentinatorScopeDelimiter", -- Highlight group for scope delimiter characters (braces, keywords)
-  exclude_fn = nil,                  -- Custom callback: fun(buf: number): boolean (true to exclude)
-  exclude = {},                      -- List of excluded filetypes, e.g. { "help", "markdown" }
-  exclude_buftypes = {               -- List of excluded buftypes
-    "terminal",
-    "nofile",
-    "quickfix",
-    "prompt"
+  exclude = {
+    filetypes = {},      -- List of excluded filetypes, e.g. { "NvimTree" }
+    buftypes = {         -- List of excluded buftypes
+      "terminal",
+      "nofile",
+      "quickfix",
+      "prompt"
+    },
   },
-  -- Per-filetype overrides (deep-merged, so only specified keys are overridden)
-  filetypes = {
-    python = {
-      indent_width = 2
-    }
-  }
 })
 ```
-
-### Style Presets
-
-The `style` option configures default characters for standard guides, active scope guides, corners, and horizontal connector lines:
-
-| Preset Name | Guide Char (`char`) | Active Char (`current_char`) | Top Corner (`corner_top`) | Bottom Corner (`corner_bottom`) | Connector (`underline_char`) |
-|-------------|---------------------|-----------------------------|---------------------------|--------------------------------|------------------------------|
-| `"thick"`   | `│` | `┃` | `┏` | `┗` | `━` |
-| `"thin"`    | `│` | `│` | `┌` | `└` | `─` |
-| `"curved"`  | `│` | `┃` | `╭` | `╰` | `─` |
-| `"heavy"`   | `┃` | `┃` | `┏` | `┗` | `━` |
-| `"double"`  | `║` | `║` | `╔` | `╚` | `═` |
-| `"dashed"`  | `┆` | `┃` | `┏` | `┗` | `━` |
-| `"dotted"`  | `┊` | `┃` | `┏` | `┗` | `━` |
 
 ---
 
-## Colour Customisation
+## Lua API
 
-Standard highlight definitions:
+- **`require("indentinator").get_current_scope(buf, win)`**:
+  Returns `{ scope_start = line_num, scope_end = line_num, active_col = col_idx }` or `nil`.
+- **`require("indentinator").enable(buf)`** / **`disable(buf)`** / **`toggle(buf)`**:
+  Buffer-level enablement controls.
 
-| Highlight Group | Default Colour | Description |
-|-----------------|----------------|-------------|
-| `IndentinatorGuide` | `#555b6e` | Default guide character colour |
-| `IndentinatorGap` | `#555b6e` | Gap fill colour (when `draw_gap_hl = true`) |
-| `IndentinatorCurrentGuide` | `#a6adc8` | Current/active guide character colour |
-| `IndentinatorScopeText` | `#cdd6f4` | Foreground colour for scope-start line text |
-| `IndentinatorScopeBg` | `#1c1e2a` | Background colour for active scope block |
-| `IndentinatorScopeDelimiter` | `#cdd6f4` | Colour for scope delimiter braces/brackets/keywords (bold, italic, underline) |
-| `IndentinatorRainbow1`..`7` | Palette (Red, Yellow, Green, Cyan, Blue, Purple, Orange) | Depth-cycled colors for scope delimiters when `rainbow_delimiters = true` |
+---
 
-Highlights are automatically re-applied on `ColorScheme` events. Customise colours in your configuration after loading your preferred colorscheme:
+## Highlights
 
-```lua
-vim.api.nvim_set_hl(0, "IndentinatorGuide", { fg = "#555b6e", bg = "NONE" })
-vim.api.nvim_set_hl(0, "IndentinatorCurrentGuide", { fg = "#a6adc8", bg = "NONE" })
-vim.api.nvim_set_hl(0, "IndentinatorScopeBg", { bg = "#1c1e2a" })
-vim.api.nvim_set_hl(0, "IndentinatorScopeDelimiter", { fg = "#cdd6f4", bold = true, italic = true, underline = true })
-```
-
-> [!IMPORTANT]
-> Always set `bg = "NONE"` on guide character highlight groups (`IndentinatorGuide`, `IndentinatorCurrentGuide`) to prevent guides from obscuring background styling.
-
-### Scope Background & Delimiters Example
-
-With `scope.enabled = true`, `scope.background = true`, and `scope.delimiters = true`:
-
-```lua
-require("indentinator").setup({
-  scope = {
-    enabled = true,
-    background = true, -- Highlights active scope block lines
-    delimiters = true, -- Highlights scope boundary keywords & brackets
-    treesitter = true, -- Enables AST-based active scope detection
-  },
-})
-```
+| Highlight Group | Default | Description |
+|-----------------|---------|-------------|
+| `IndentinatorIndent` | `#45475a` | Standard guide character colour |
+| `IndentinatorScope` | `#cdd6f4` (bold) | Active scope guide character colour |
 
 ---
 
