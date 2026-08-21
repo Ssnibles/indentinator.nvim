@@ -1,19 +1,29 @@
 --- Configuration module for indentinator.nvim.
 --- Handles user settings, defaults, and buffer enablement checks for indent and scope guides.
 
+---@class IndentinatorRainbowConfig
+---@field enabled boolean Whether rainbow indent colors are enabled (default false)
+---@field colors string[] Array of hex color strings for rainbow levels
+
 ---@class IndentinatorIndentConfig
 ---@field enabled boolean Whether normal indent guides across all levels are enabled (default true)
 ---@field char string Standard guide character (default "│")
 ---@field hl string Highlight group name for standard guides (default "IndentinatorIndent")
+---@field rainbow IndentinatorRainbowConfig Rainbow indent guides configuration
 
 ---@class IndentinatorScopeConfig
 ---@field enabled boolean Whether active scope guide highlighting is enabled (default true)
 ---@field char string Active scope guide character (default "│")
----@field hl string Highlight group name for scope guide (default "IndentinatorScope")
+---@field char_top string Top corner boundary character (default "┌")
+---@field char_bottom string Bottom corner boundary character (default "└")
+---@field corners boolean Whether top and bottom boundary corners are rendered (default true)
+---@field hl string Highlight group name for active scope guide (default "IndentinatorScope")
+---@field hl_header string|nil Optional highlight group name for scope header line
 ---@field treesitter boolean Whether Treesitter scope detection is enabled (default true)
 
 ---@class IndentinatorConfig
 ---@field enabled boolean Whether plugin is globally enabled
+---@field debounce_ms integer Debounce delay in milliseconds for cursor/scroll updates (default 10)
 ---@field indent IndentinatorIndentConfig Standard indentation guides config
 ---@field scope IndentinatorScopeConfig Active scope guide config
 ---@field priority integer Extmark priority (default 100)
@@ -25,15 +35,31 @@ local M = {}
 ---@type IndentinatorConfig
 M.defaults = {
   enabled = true,
+  debounce_ms = 10,
   indent = {
     enabled = true,
     char = "│",
     hl = "IndentinatorIndent",
+    rainbow = {
+      enabled = false,
+      colors = {
+        "#f38ba8", -- Red
+        "#fab387", -- Peach
+        "#f9e2af", -- Yellow
+        "#a6e3a1", -- Green
+        "#89b4fa", -- Blue
+        "#cba6f7", -- Mauve
+      },
+    },
   },
   scope = {
     enabled = true,
     char = "│",
+    char_top = "┌",
+    char_bottom = "└",
+    corners = true,
     hl = "IndentinatorScope",
+    hl_header = nil,
     treesitter = true,
   },
   priority = 100,
@@ -57,6 +83,9 @@ function M.setup(opts)
   if opts.enabled ~= nil then
     M.values.enabled = opts.enabled
   end
+  if opts.debounce_ms ~= nil then
+    M.values.debounce_ms = opts.debounce_ms
+  end
   if opts.priority ~= nil then
     M.values.priority = opts.priority
   end
@@ -73,7 +102,7 @@ function M.setup(opts)
     M.values.scope.enabled = opts.scope
   end
 
-  -- Flat options support for backward compatibility
+  -- Flat options support for convenience
   if opts.char then
     M.values.indent.char = opts.char
     M.values.scope.char = opts.char

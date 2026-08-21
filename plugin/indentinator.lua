@@ -51,6 +51,19 @@ vim.api.nvim_create_user_command("IndentinatorScopeToggle", cmd(function()
   ind.force_update()
 end), { desc = "Toggle active scope guide" })
 
+vim.api.nvim_create_user_command("IndentinatorRainbowToggle", cmd(function()
+  ind.config.indent.rainbow = ind.config.indent.rainbow or {}
+  local curr = ind.config.indent.rainbow.enabled == true
+  ind.config.indent.rainbow.enabled = not curr
+  ind.force_update()
+end), { desc = "Toggle rainbow indent guide colors" })
+
+vim.api.nvim_create_user_command("IndentinatorCornersToggle", cmd(function()
+  local curr = ind.config.scope.corners ~= false
+  ind.config.scope.corners = not curr
+  ind.force_update()
+end), { desc = "Toggle active scope boundary corners" })
+
 vim.api.nvim_create_user_command("IndentinatorHealth", cmd(function()
   vim.cmd("checkhealth indentinator")
 end), { desc = "Run indentinator health check" })
