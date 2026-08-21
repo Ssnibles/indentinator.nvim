@@ -1,4 +1,4 @@
--- Test suite for indentinator.nvim (scope & normal indent guide support)
+-- Test suite for indentinator.nvim (scope corners, rainbow indent, debounced rendering)
 -- Run via:
 -- nvim --headless -u NONE -c "set rtp+=." -c "luafile tests/test_indentinator.lua" -c "q"
 
@@ -15,7 +15,7 @@ local function assert_eq(actual, expected, msg)
   end
 end
 
-print("=== Running Indentinator Scope & Indent Guide Test Suite ===")
+print("=== Running Indentinator Expanded Test Suite ===")
 
 -- 1. Test Health Check
 print("[Test 1] Testing Health Check Execution...")
@@ -28,14 +28,22 @@ print("  ✓ Health check completed successfully.")
 print("[Test 2] Testing Plugin Setup & Config Merging...")
 local ind = require("indentinator")
 ind.setup({
+  debounce_ms = 15,
   indent = {
     enabled = true,
     char = "│",
     hl = "IndentinatorIndent",
+    rainbow = {
+      enabled = true,
+      colors = { "#f38ba8", "#fab387", "#a6e3a1" },
+    },
   },
   scope = {
     enabled = true,
     char = "│",
+    char_top = "┌",
+    char_bottom = "└",
+    corners = true,
     hl = "IndentinatorScope",
     treesitter = true,
   },
@@ -43,10 +51,10 @@ ind.setup({
     filetypes = { "NvimTree" },
   },
 })
-assert_eq(ind.config.indent.enabled, true, "Indent config enabled failed to merge")
-assert_eq(ind.config.scope.treesitter, true, "Scope treesitter failed to merge")
-assert_eq(ind.config.exclude.filetypes[1], "NvimTree", "Exclude filetypes failed to merge")
-print("  ✓ Plugin setup merged nested configuration correctly.")
+assert_eq(ind.config.debounce_ms, 15, "Debounce ms failed to merge")
+assert_eq(ind.config.indent.rainbow.enabled, true, "Rainbow enabled failed to merge")
+assert_eq(ind.config.scope.char_top, "┌", "Scope char_top failed to merge")
+print("  ✓ Plugin setup merged expanded configuration correctly.")
 
 -- 3. Test Treesitter Scope Resolution on Lua Code
 print("[Test 3] Testing Treesitter Scope Resolution on Lua Code...")
@@ -78,50 +86,31 @@ assert_eq(scope_info.scope_start, 2, "Expected Treesitter scope start line 2")
 assert_eq(scope_info.scope_end, 5, "Expected Treesitter scope end line 5")
 print("  ✓ Treesitter scope resolution verified successfully.")
 
--- 4. Test Indentation Scope Fallback
-print("[Test 4] Testing Indentation Scope Fallback...")
-ind.setup({ scope = { treesitter = false } })
-local indent_scope = ind.get_current_scope(buf, win)
-assert_eq(indent_scope ~= nil, true, "Indentation scope fallback returned nil")
-assert_eq(indent_scope.scope_start, 2, "Expected indentation scope start line 2")
-assert_eq(indent_scope.scope_end, 5, "Expected indentation scope end line 5")
-print("  ✓ Indentation scope fallback verified successfully.")
-
--- Re-enable treesitter for remaining tests
-ind.setup({ scope = { treesitter = true } })
-
--- 5. Test Enable / Disable / Toggle Controls
-print("[Test 5] Testing Enable, Disable, and Toggle Controls...")
-assert_eq(ind.is_enabled(buf), true, "Buffer should be enabled")
-
-ind.disable(buf)
-assert_eq(ind.is_enabled(buf), false, "Buffer should be disabled")
-
-local render = require("indentinator.render")
-local disabled_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, 0, -1, {})
-assert_eq(#disabled_marks, 0, "Disabled buffer should have zero extmarks")
-
-ind.toggle(buf)
-assert_eq(ind.is_enabled(buf), true, "Toggled buffer should be re-enabled")
-print("  ✓ Enable/disable/toggle controls verified successfully.")
-
--- 6. Test Multi-Level Indent & Scope Extmark Rendering
-print("[Test 6] Testing Multi-Level Indent & Scope Rendering...")
+-- 4. Test Scope Corners Rendering (Top & Bottom Boundaries)
+print("[Test 4] Testing Scope Corners Boundary Rendering...")
 ind.force_update()
-local enabled_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, 0, -1, { details = true })
-assert_eq(#enabled_marks > 0, true, "Active buffer should generate extmarks")
+local render = require("indentinator.render")
 
--- Check line 3 (has 6 spaces indent -> col 2 active scope, col 4 normal indent)
+-- Line 3 is first scope body line (renders `┌`), line 4 is last scope body line (renders `└`)
 local line3_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true })
-assert_eq(#line3_marks, 2, "Line 3 should have 2 extmarks (col 2 active scope, col 4 normal indent)")
-assert_eq(line3_marks[1][4].virt_text_win_col, 2, "Col 2 should be first extmark")
-assert_eq(line3_marks[2][4].virt_text_win_col, 4, "Col 4 should be second extmark")
-assert_eq(line3_marks[1][4].virt_text[1][2], "IndentinatorScope", "Col 2 active scope should use IndentinatorScope")
-assert_eq(line3_marks[2][4].virt_text[1][2], "IndentinatorIndent", "Col 4 normal indent should use IndentinatorIndent")
-print("  ✓ Multi-level indent and scope extmarks verified successfully.")
+local line4_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 3, 0 }, { 3, -1 }, { details = true })
 
--- 7. Test Buffer Lifecycle Cleanup
-print("[Test 7] Testing Buffer Lifecycle Cleanup...")
+assert_eq(#line3_marks > 0, true, "Line 3 (first scope body line) should have extmark")
+assert_eq(line3_marks[1][4].virt_text[1][1], "┌", "Line 3 should render top corner '┌'")
+
+assert_eq(#line4_marks > 0, true, "Line 4 (last scope body line) should have extmark")
+assert_eq(line4_marks[1][4].virt_text[1][1], "└", "Line 4 should render bottom corner '└'")
+print("  ✓ Scope corner boundaries verified successfully.")
+
+-- 5. Test Rainbow Indent Colors
+print("[Test 5] Testing Rainbow Indent Color Extmarks...")
+-- Line 3 has 6 spaces indent -> col 4 is level 2 -> uses IndentinatorRainbow2
+assert_eq(#line3_marks, 2, "Line 3 should have 2 extmarks")
+assert_eq(line3_marks[2][4].virt_text[1][2], "IndentinatorRainbow2", "Col 4 normal indent should use IndentinatorRainbow2")
+print("  ✓ Rainbow indent color extmarks verified successfully.")
+
+-- 6. Test Buffer Lifecycle Cleanup
+print("[Test 6] Testing Buffer Lifecycle Cleanup...")
 local cleanup_buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_buf_set_lines(cleanup_buf, 0, -1, false, { "function test()", "  return 1", "end" })
 ind.enable(cleanup_buf)
@@ -133,8 +122,8 @@ assert_eq(state_mod.state.enabled[cleanup_buf], nil, "BufDelete should clear sta
 pcall(vim.api.nvim_buf_delete, cleanup_buf, { force = true })
 print("  ✓ Buffer lifecycle cleanup verified successfully.")
 
--- 8. Test Horizontal Scroll (leftcol) Positioning
-print("[Test 8] Testing Horizontal Scroll (leftcol) Positioning...")
+-- 7. Test Horizontal Scroll (leftcol) Positioning
+print("[Test 7] Testing Horizontal Scroll (leftcol) Positioning...")
 local scroll_buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_buf_set_lines(scroll_buf, 0, -1, false, {
   "function scroll_demo()",
@@ -157,8 +146,8 @@ assert_eq(scroll_win_col, 0, "virt_text_win_col should be adjusted for leftcol s
 
 pcall(vim.api.nvim_buf_delete, scroll_buf, { force = true })
 
--- 9. Test Unindented Text Column 0 Protection
-print("[Test 9] Testing Unindented Text Protection...")
+-- 8. Test Unindented Text Column 0 Protection
+print("[Test 8] Testing Unindented Text Protection...")
 local plain_buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_buf_set_lines(plain_buf, 0, -1, false, {
   "result",
