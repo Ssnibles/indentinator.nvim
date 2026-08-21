@@ -1,5 +1,5 @@
 --- Extmark renderer module for indentinator.nvim.
---- Handles extmark drawing for standard indent guides and active scope highlighting across window viewports.
+--- Handles extmark drawing for standard indent guides, rainbow colors, scope corners, and header highlights.
 
 local config = require("indentinator.config")
 local state = require("indentinator.state").state
@@ -22,7 +22,7 @@ local M = {}
 --- Extmark namespace handle for indentinator
 M.NS = api.nvim_create_namespace("indentinator")
 
---- Initialises default highlight groups for standard indent and scope guides.
+--- Initialises default highlight groups for standard indent, scope, and rainbow guides.
 function M.set_hl()
   api.nvim_set_hl(0, "IndentinatorIndent", {
     fg = "#45475a",
@@ -35,6 +35,17 @@ function M.set_hl()
     bg = "NONE",
     default = true,
   })
+
+  local rainbow_cfg = config.values.indent and config.values.indent.rainbow
+  if rainbow_cfg and type(rainbow_cfg.colors) == "table" then
+    for idx, hex in ipairs(rainbow_cfg.colors) do
+      api.nvim_set_hl(0, "IndentinatorRainbow" .. idx, {
+        fg = hex,
+        bg = "NONE",
+        default = true,
+      })
+    end
+  end
 end
 
 --- Clears scope extmarks for a buffer.
@@ -93,9 +104,11 @@ function M.render(buf, win)
 
   local indent_cfg = config.values.indent or {}
   local scope_cfg = config.values.scope or {}
+  local rainbow_cfg = indent_cfg.rainbow or {}
 
   local indent_enabled = indent_cfg.enabled ~= false
   local scope_enabled = scope_cfg.enabled ~= false
+  local rainbow_enabled = rainbow_cfg.enabled == true and type(rainbow_cfg.colors) == "table" and #rainbow_cfg.colors > 0
 
   if not indent_enabled and not scope_enabled then
     return
@@ -116,6 +129,25 @@ function M.render(buf, win)
   local width = utils.indent_width(buf)
   local tabstop = utils.buffer_tabstop(buf)
   local priority = config.values.priority or 100
+
+  M.set_hl()
+
+  -- Compute actual rendered boundary lines for active scope corners
+  local first_scope_line, last_scope_line
+  if scope_enabled and scope_start and scope_end and scope_start < scope_end then
+    for l = scope_start, scope_end do
+      local ok_l, lines = pcall(nvim_buf_get_lines, buf, l - 1, l, false)
+      if ok_l and lines and lines[1] then
+        local lead = lines[1]:match("^%s*") or ""
+        local is_b = (lines[1] == "" or #lead == #lines[1])
+        local lw = is_b and 9999 or utils.lead_display_width(lead, tabstop)
+        if active_col and active_col < lw then
+          if not first_scope_line then first_scope_line = l end
+          last_scope_line = l
+        end
+      end
+    end
+  end
 
   for line = start_line, end_line do
     local line_idx = line - 1
@@ -139,6 +171,14 @@ function M.render(buf, win)
       local in_scope_range = scope_start and scope_end and (line >= scope_start and line <= scope_end)
       local max_col = target_width - (is_blank and 0 or width)
 
+      -- Optional header line highlighting
+      if scope_enabled and in_scope_range and line == scope_start and scope_cfg.hl_header then
+        pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, 0, {
+          line_hl_group = scope_cfg.hl_header,
+          priority = priority - 1,
+        })
+      end
+
       if max_col >= width then
         for col = width, max_col, width do
           local win_col = col - leftcol
@@ -148,10 +188,23 @@ function M.render(buf, win)
 
             if is_active and scope_enabled then
               char = scope_cfg.char or "│"
+              if scope_cfg.corners and first_scope_line and last_scope_line and first_scope_line < last_scope_line then
+                if line == first_scope_line and scope_cfg.char_top and scope_cfg.char_top ~= "" then
+                  char = scope_cfg.char_top
+                elseif line == last_scope_line and scope_cfg.char_bottom and scope_cfg.char_bottom ~= "" then
+                  char = scope_cfg.char_bottom
+                end
+              end
               hl = scope_cfg.hl or "IndentinatorScope"
             elseif indent_enabled then
               char = indent_cfg.char or "│"
-              hl = indent_cfg.hl or "IndentinatorIndent"
+              if rainbow_enabled then
+                local level = math.max(1, math.floor(col / width))
+                local r_idx = (level - 1) % #rainbow_cfg.colors + 1
+                hl = "IndentinatorRainbow" .. r_idx
+              else
+                hl = indent_cfg.hl or "IndentinatorIndent"
+              end
             end
 
             if char and hl then
