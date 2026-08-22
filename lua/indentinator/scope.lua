@@ -26,18 +26,25 @@ local ROOT_AST_TYPES = {
   root = true,
 }
 
+--- Block/body container types that should promote to their parent construct
+local BLOCK_TYPES = {
+  block = true,
+  statement_list = true,
+  compound_statement = true,
+  body = true,
+  consequence = true,
+  alternative = true,
+}
+
 --- Resolves scope boundaries using Treesitter AST traversal.
 ---@param buf integer Buffer handle
 ---@param win integer Window handle
 ---@return integer|nil scope_start 1-indexed row
 ---@return integer|nil scope_end 1-indexed row
 ---@return integer|nil active_col Indent column
+---@return table|nil scope_node TSNode
 function M.get_treesitter_scope(buf, win)
   if not buf or not win or not nvim_buf_is_valid(buf) or not nvim_win_is_valid(win) then
-    return nil, nil, nil
-  end
-
-  if not vim.treesitter or not vim.treesitter.get_parser then
     return nil, nil, nil
   end
 
@@ -52,15 +59,8 @@ function M.get_treesitter_scope(buf, win)
   local row = cursor[1] - 1
   local col = cursor[2]
 
-  local node = nil
-  if vim.treesitter.get_node then
-    local ok_n, n = pcall(vim.treesitter.get_node, { bufnr = buf, pos = { row, col } })
-    if ok_n then
-      node = n
-    end
-  end
-
-  if not node then
+  local ok_n, node = pcall(vim.treesitter.get_node, { bufnr = buf, pos = { row, col } })
+  if not ok_n or not node then
     local ok_t, trees = pcall(function() return parser:trees() end)
     if ok_t and trees and trees[1] then
       local root = trees[1]:root()
@@ -95,16 +95,7 @@ function M.get_treesitter_scope(buf, win)
     return nil, nil, nil, nil
   end
 
-  local BLOCK_TYPES = {
-    block = true,
-    statement_list = true,
-    compound_statement = true,
-    body = true,
-    consequence = true,
-    alternative = true,
-  }
-
-  -- If scope_node is a body/block container, promote to its parent construct (e.g. if_statement, function_declaration)
+  -- If scope_node is a body/block container, promote to its parent construct
   if BLOCK_TYPES[scope_node:type()] then
     local parent = scope_node:parent()
     if parent and not ROOT_AST_TYPES[parent:type()] then
@@ -254,6 +245,7 @@ end
 local state_mod = require("indentinator.state")
 
 --- Primary scope resolution dispatcher with memoization caching.
+--- Cache key includes cursor column for treesitter scopes (node under cursor may change).
 ---@param buf integer Buffer handle
 ---@param win integer Window handle
 ---@param use_treesitter boolean Whether Treesitter scope is enabled
@@ -272,9 +264,18 @@ function M.get_scope(buf, win, use_treesitter)
   end
 
   local cursor_row = cursor[1]
+  local cursor_col = cursor[2]
   local tick = api.nvim_buf_get_changedtick(buf)
   local ts_flag = use_treesitter ~= false and "1" or "0"
-  local key = win .. ":" .. cursor_row .. ":" .. tick .. ":" .. ts_flag
+
+  -- Include cursor column in cache key for treesitter scopes where
+  -- the node under the cursor may change with horizontal movement
+  local key
+  if ts_flag == "1" then
+    key = win .. ":" .. cursor_row .. ":" .. cursor_col .. ":" .. tick .. ":ts"
+  else
+    key = win .. ":" .. cursor_row .. ":" .. tick .. ":in"
+  end
 
   local buf_cache = state_mod.state.cache[buf]
   if buf_cache and buf_cache[key] ~= nil then

@@ -13,7 +13,7 @@ function M.get_buf_opt(buf, opt)
   if not buf or not api.nvim_buf_is_valid(buf) then
     return nil
   end
-  local ok, val = pcall(api.nvim_get_option_value, opt, { buf = buf })
+  local ok, val = pcall(function() return vim.bo[buf][opt] end)
   if ok and type(val) == "number" and val > 0 then
     return val
   end

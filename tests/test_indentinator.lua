@@ -106,7 +106,11 @@ print("  ✓ Scope corner boundaries verified successfully.")
 print("[Test 5] Testing Rainbow Indent Color Extmarks...")
 -- Line 3 has 6 spaces indent -> col 4 is level 2 -> uses IndentinatorRainbow2
 assert_eq(#line3_marks, 2, "Line 3 should have 2 extmarks")
-assert_eq(line3_marks[2][4].virt_text[1][2], "IndentinatorRainbow2", "Col 4 normal indent should use IndentinatorRainbow2")
+assert_eq(
+  line3_marks[2][4].virt_text[1][2],
+  "IndentinatorRainbow2",
+  "Col 4 normal indent should use IndentinatorRainbow2"
+)
 print("  ✓ Rainbow indent color extmarks verified successfully.")
 
 -- 6. Test Buffer Lifecycle Cleanup
@@ -287,16 +291,23 @@ ind.setup({
 })
 ind.force_update()
 
-local marks_a_corner = vim.api.nvim_buf_get_extmarks(rainbow_test_buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true })
+local marks_a_corner = vim.api.nvim_buf_get_extmarks(
+  rainbow_test_buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true }
+)
 assert_eq(#marks_a_corner > 0, true, "Extmarks should exist for line 3")
-assert_eq(marks_a_corner[1][4].virt_text[1][2], "IndentinatorRainbow1", "Scope line & top corner should use IndentinatorRainbow1 when scope.rainbow=true")
+assert_eq(
+  marks_a_corner[1][4].virt_text[1][2],
+  "IndentinatorRainbow1",
+  "Scope line & top corner should use IndentinatorRainbow1 when scope.rainbow=true"
+)
 
 local delim_hl_info = vim.api.nvim_get_hl(0, { name = "IndentinatorDelimiter" })
 assert_eq(delim_hl_info.bold, true, "IndentinatorDelimiter should have bold=true")
 assert_eq(delim_hl_info.italic, true, "IndentinatorDelimiter should have italic=true")
 assert_eq(delim_hl_info.underline, true, "IndentinatorDelimiter should have underline=true")
 
--- Case B: scope.rainbow = false, delimiters.rainbow = true (Corners MUST match scope line IndentinatorScope, NOT delimiters!)
+-- Case B: scope.rainbow = false, delimiters.rainbow = true
+-- (Corners MUST match scope line IndentinatorScope, NOT delimiters!)
 ind.setup({
   scope = {
     enabled = true,
@@ -310,9 +321,13 @@ ind.setup({
 ind.force_update()
 
 -- Line 2 (0-indexed 1) is scope_start with delimiters `(`, `)`, `{`
-local marks_b_start = vim.api.nvim_buf_get_extmarks(rainbow_test_buf, render.NS, { 1, 0 }, { 1, -1 }, { details = true })
+local marks_b_start = vim.api.nvim_buf_get_extmarks(
+  rainbow_test_buf, render.NS, { 1, 0 }, { 1, -1 }, { details = true }
+)
 -- Line 3 (0-indexed 2) is first body line with top corner `┌`
-local marks_b_topcorner = vim.api.nvim_buf_get_extmarks(rainbow_test_buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true })
+local marks_b_topcorner = vim.api.nvim_buf_get_extmarks(
+  rainbow_test_buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true }
+)
 
 local delim_hl = nil
 for _, m in ipairs(marks_b_start) do
@@ -321,8 +336,16 @@ for _, m in ipairs(marks_b_start) do
   end
 end
 
-assert_eq(delim_hl, "IndentinatorDelimiter1", "Delimiter bracket should use IndentinatorDelimiter1 when delimiters.rainbow=true")
-assert_eq(marks_b_topcorner[1][4].virt_text[1][2], "IndentinatorScope", "Top corner MUST use IndentinatorScope when scope.rainbow=false")
+assert_eq(
+  delim_hl,
+  "IndentinatorDelimiter1",
+  "Delimiter bracket should use IndentinatorDelimiter1 when delimiters.rainbow=true"
+)
+assert_eq(
+  marks_b_topcorner[1][4].virt_text[1][2],
+  "IndentinatorScope",
+  "Top corner MUST use IndentinatorScope when scope.rainbow=false"
+)
 print("  ✓ Delimiters config (bold, italic, underline, rainbow) & scope corner uniformity verified successfully.")
 
 pcall(vim.api.nvim_buf_delete, rainbow_test_buf, { force = true })
@@ -358,7 +381,11 @@ for _, m in ipairs(marks_if_line) do
     if_kw_count = if_kw_count + 1
   end
 end
-assert_eq(if_kw_count >= 2, true, "Both 'if' and 'then' keywords on scope start boundary should receive delimiter extmarks")
+assert_eq(
+  if_kw_count >= 2,
+  true,
+  "Both 'if' and 'then' keywords on scope start boundary should receive delimiter extmarks"
+)
 
 -- Line 5 (0-indexed 4) is `end` (scope_end for block)
 local marks_end_line = vim.api.nvim_buf_get_extmarks(ts_kw_buf, render.NS, { 4, 0 }, { 4, -1 }, { details = true })

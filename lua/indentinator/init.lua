@@ -19,7 +19,6 @@ local M = {}
 
 local AUGROUP = "Indentinator"
 local uv = vim.uv or vim.loop
-local render_timer = nil
 
 --- Active plugin configuration reference
 M.config = config.values
@@ -37,7 +36,8 @@ local function for_each_active_win(fn)
   end
 end
 
---- Debounced render trigger for frequent events (CursorMoved, WinScrolled)
+--- Per-window debounced render trigger for frequent events (CursorMoved, WinScrolled).
+--- Each window gets its own timer to avoid stale firings when switching windows rapidly.
 ---@param buf integer Buffer handle
 ---@param win integer Window handle
 local function debounced_render(buf, win)
@@ -47,14 +47,16 @@ local function debounced_render(buf, win)
     return
   end
 
-  if render_timer then
-    pcall(function() render_timer:stop() end)
+  local timer = state.timers[win]
+  if timer then
+    pcall(function() timer:stop() end)
   else
-    render_timer = uv.new_timer()
+    timer = uv.new_timer()
+    state.timers[win] = timer
   end
 
-  render_timer:start(delay, 0, vim.schedule_wrap(function()
-    if nvim_win_is_valid(win) then
+  timer:start(delay, 0, vim.schedule_wrap(function()
+    if nvim_win_is_valid(win) and nvim_buf_is_loaded(buf) then
       render.render(buf, win)
     end
   end))
@@ -92,7 +94,7 @@ local function setup_autocmds()
     end,
   })
 
-  -- Clean up state when window closes
+  -- Clean up state and timer when window closes
   api.nvim_create_autocmd("WinClosed", {
     group = AUGROUP,
     callback = function(e)
@@ -204,7 +206,8 @@ function M.get_current_scope(buf, win)
     return nil
   end
 
-  local start_row, end_row, active_col = scope.get_scope(buf, win, config.values.scope and config.values.scope.treesitter)
+  local use_ts = config.values.scope and config.values.scope.treesitter
+  local start_row, end_row, active_col = scope.get_scope(buf, win, use_ts)
   if start_row and end_row then
     return {
       scope_start = start_row,

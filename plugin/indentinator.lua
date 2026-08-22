@@ -80,7 +80,7 @@ end), { desc = "Toggle rainbow active scope line colors" })
 
 vim.api.nvim_create_user_command("IndentinatorDelimitersToggle", cmd(function()
   ind.config.delimiters = ind.config.delimiters or {}
-  ind.config.delimiters.enabled = not (ind.config.delimiters.enabled ~= false)
+  ind.config.delimiters.enabled = ind.config.delimiters.enabled == false
   ind.force_update()
 end), { desc = "Toggle scope boundary delimiter highlighting" })
 

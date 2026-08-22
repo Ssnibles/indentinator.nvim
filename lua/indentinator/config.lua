@@ -14,7 +14,8 @@
 
 ---@class IndentinatorDelimitersConfig
 ---@field enabled boolean Whether boundary delimiter highlighting is enabled (default true)
----@field keywords boolean Whether Treesitter scope keywords (if, then, end, function, while, do, etc.) are highlighted as delimiters (default true)
+---@field keywords boolean Whether Treesitter scope keywords (if, then, end, function, etc.)
+---  are highlighted as delimiters (default true)
 ---@field rainbow boolean Whether delimiters use depth-level rainbow colors (default false)
 ---@field bold boolean Whether delimiters render in bold (default false)
 ---@field italic boolean Whether delimiters render in italic (default false)
@@ -37,11 +38,14 @@
 ---@class IndentinatorConfig
 ---@field enabled boolean Whether plugin is globally enabled
 ---@field debounce_ms integer Debounce delay in milliseconds for cursor/scroll updates (default 10)
+---@field max_file_lines integer Maximum file line count before rendering is skipped (default 10000)
 ---@field indent IndentinatorIndentConfig Standard indentation guides config
 ---@field scope IndentinatorScopeConfig Active scope guide config
 ---@field delimiters IndentinatorDelimitersConfig Scope boundary delimiters config
 ---@field priority integer Extmark priority (default 100)
 ---@field exclude table Excluded filetypes and buftypes
+
+local api = vim.api
 
 local M = {}
 
@@ -58,6 +62,7 @@ M.CORNER_PRESETS = {
 M.defaults = {
   enabled = true,
   debounce_ms = 10,
+  max_file_lines = 10000,
   indent = {
     enabled = true,
     show_empty = true,
@@ -121,6 +126,9 @@ function M.setup(opts)
   if opts.debounce_ms ~= nil then
     M.values.debounce_ms = opts.debounce_ms
   end
+  if opts.max_file_lines ~= nil then
+    M.values.max_file_lines = opts.max_file_lines
+  end
   if opts.priority ~= nil then
     M.values.priority = opts.priority
   end
@@ -183,12 +191,46 @@ function M.setup(opts)
   end
 end
 
+--- Pre-built set of excluded buftypes for O(1) lookup.
+---@param buf integer Buffer handle
+---@return boolean True if buftype is excluded
+local function is_buftype_excluded(buf)
+  local ok, bt = pcall(function() return vim.bo[buf].buftype end)
+  if not ok or type(bt) ~= "string" or bt == "" then
+    return false
+  end
+  local excluded = M.values.exclude.buftypes or {}
+  for _, ex_bt in ipairs(excluded) do
+    if bt == ex_bt then
+      return true
+    end
+  end
+  return false
+end
+
+--- Checks if a buffer filetype is excluded.
+---@param buf integer Buffer handle
+---@return boolean True if filetype is excluded
+local function is_filetype_excluded(buf)
+  local ok, ft = pcall(function() return vim.bo[buf].filetype end)
+  if not ok or type(ft) ~= "string" or ft == "" then
+    return false
+  end
+  local excluded = M.values.exclude.filetypes or {}
+  for _, ex_ft in ipairs(excluded) do
+    if ft == ex_ft then
+      return true
+    end
+  end
+  return false
+end
+
 --- Checks if plugin features are enabled for a given buffer.
 ---@param buf integer Buffer handle
 ---@param state_enabled boolean|nil Buffer-specific explicit enablement override
 ---@return boolean True if guides should run for this buffer
 function M.is_enabled(buf, state_enabled)
-  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+  if not buf or not api.nvim_buf_is_valid(buf) then
     return false
   end
 
@@ -200,24 +242,12 @@ function M.is_enabled(buf, state_enabled)
     return false
   end
 
-  -- Check excluded buftype
-  local ok_bt, bt = pcall(vim.api.nvim_get_option_value, "buftype", { buf = buf })
-  if ok_bt and bt and type(bt) == "string" and bt ~= "" then
-    for _, ex_bt in ipairs(M.values.exclude.buftypes or {}) do
-      if bt == ex_bt then
-        return false
-      end
-    end
+  if is_buftype_excluded(buf) then
+    return false
   end
 
-  -- Check excluded filetype
-  local ok_ft, ft = pcall(vim.api.nvim_get_option_value, "filetype", { buf = buf })
-  if ok_ft and ft and type(ft) == "string" and ft ~= "" then
-    for _, ex_ft in ipairs(M.values.exclude.filetypes or {}) do
-      if ft == ex_ft then
-        return false
-      end
-    end
+  if is_filetype_excluded(buf) then
+    return false
   end
 
   return true
