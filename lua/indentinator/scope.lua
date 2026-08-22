@@ -82,29 +82,34 @@ function M.get_treesitter_scope(buf, win)
   while curr do
     local type_name = curr:type()
     local s_row, _, e_row, _ = curr:range()
-    local parent = curr:parent()
 
-    -- Only consider multi-line nodes that are nested inside non-root parents
+    -- Only consider multi-line nodes that are not document root types
     if s_row < e_row and not ROOT_AST_TYPES[type_name] then
-      if parent and not ROOT_AST_TYPES[parent:type()] then
-        scope_node = curr
-        break
-      end
+      scope_node = curr
+      break
     end
-    curr = parent
+    curr = curr:parent()
   end
 
   if not scope_node then
-    return nil, nil, nil
+    return nil, nil, nil, nil
   end
 
-  -- Check if parent of scope_node (e.g. if_statement, function_declaration) extends to header construct
-  local parent = scope_node:parent()
-  if parent and not ROOT_AST_TYPES[parent:type()] then
-    local p_s_row, _, p_e_row, _ = parent:range()
-    if p_s_row < p_e_row then
-      local grandparent = parent:parent()
-      if grandparent and not ROOT_AST_TYPES[grandparent:type()] then
+  local BLOCK_TYPES = {
+    block = true,
+    statement_list = true,
+    compound_statement = true,
+    body = true,
+    consequence = true,
+    alternative = true,
+  }
+
+  -- If scope_node is a body/block container, promote to its parent construct (e.g. if_statement, function_declaration)
+  if BLOCK_TYPES[scope_node:type()] then
+    local parent = scope_node:parent()
+    if parent and not ROOT_AST_TYPES[parent:type()] then
+      local p_s_row, _, p_e_row, _ = parent:range()
+      if p_s_row < p_e_row then
         scope_node = parent
       end
     end
@@ -123,7 +128,7 @@ function M.get_treesitter_scope(buf, win)
     active_col = utils.lead_display_width(lead, tabstop)
   end
 
-  return scope_start, scope_end, active_col
+  return scope_start, scope_end, active_col, scope_node
 end
 
 --- Resolves scope boundaries using indentation level scanning.
@@ -243,31 +248,60 @@ function M.get_indent_scope(buf, win)
     end
   end
 
-  return scope_start, scope_end, active_col
+  return scope_start, scope_end, active_col, nil
 end
 
---- Primary scope resolution dispatcher.
+local state_mod = require("indentinator.state")
+
+--- Primary scope resolution dispatcher with memoization caching.
 ---@param buf integer Buffer handle
 ---@param win integer Window handle
 ---@param use_treesitter boolean Whether Treesitter scope is enabled
 ---@return integer|nil scope_start
 ---@return integer|nil scope_end
 ---@return integer|nil active_col
+---@return table|nil scope_node
 function M.get_scope(buf, win, use_treesitter)
-  local start_row, end_row, active_col
+  if not buf or not win or not nvim_buf_is_valid(buf) or not nvim_win_is_valid(win) then
+    return nil, nil, nil, nil
+  end
+
+  local ok_c, cursor = pcall(nvim_win_get_cursor, win)
+  if not ok_c or not cursor then
+    return nil, nil, nil, nil
+  end
+
+  local cursor_row = cursor[1]
+  local tick = api.nvim_buf_get_changedtick(buf)
+  local ts_flag = use_treesitter ~= false and "1" or "0"
+  local key = win .. ":" .. cursor_row .. ":" .. tick .. ":" .. ts_flag
+
+  local buf_cache = state_mod.state.cache[buf]
+  if buf_cache and buf_cache[key] ~= nil then
+    local cached = buf_cache[key]
+    if cached == false then
+      return nil, nil, nil, nil
+    end
+    return cached[1], cached[2], cached[3], cached[4]
+  end
+
+  local start_row, end_row, active_col, scope_node
   if use_treesitter ~= false then
-    start_row, end_row, active_col = M.get_treesitter_scope(buf, win)
+    start_row, end_row, active_col, scope_node = M.get_treesitter_scope(buf, win)
   end
 
   if not start_row or not end_row or not active_col then
-    start_row, end_row, active_col = M.get_indent_scope(buf, win)
+    start_row, end_row, active_col, scope_node = M.get_indent_scope(buf, win)
   end
 
-  if start_row and end_row and active_col and active_col > 0 then
-    return start_row, end_row, active_col
+  state_mod.state.cache[buf] = state_mod.state.cache[buf] or {}
+  if start_row and end_row and active_col and active_col >= 0 then
+    state_mod.state.cache[buf][key] = { start_row, end_row, active_col, scope_node }
+    return start_row, end_row, active_col, scope_node
   end
 
-  return nil, nil, nil
+  state_mod.state.cache[buf][key] = false
+  return nil, nil, nil, nil
 end
 
 return M

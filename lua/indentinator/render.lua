@@ -37,12 +37,31 @@ function M.set_hl()
   })
 
   local rainbow_cfg = config.values.indent and config.values.indent.rainbow
+  local delims_cfg = config.values.delimiters or {}
+  local bold_opt = delims_cfg.bold == true
+  local italic_opt = delims_cfg.italic == true
+  local underline_opt = delims_cfg.underline == true
+
+  api.nvim_set_hl(0, "IndentinatorDelimiter", {
+    link = delims_cfg.hl or "IndentinatorScope",
+    bold = bold_opt,
+    italic = italic_opt,
+    underline = underline_opt,
+  })
+
   if rainbow_cfg and type(rainbow_cfg.colors) == "table" then
     for idx, hex in ipairs(rainbow_cfg.colors) do
       api.nvim_set_hl(0, "IndentinatorRainbow" .. idx, {
         fg = hex,
         bg = "NONE",
         default = true,
+      })
+      api.nvim_set_hl(0, "IndentinatorDelimiter" .. idx, {
+        fg = hex,
+        bold = bold_opt,
+        italic = italic_opt,
+        underline = underline_opt,
+        bg = "NONE",
       })
     end
   end
@@ -114,9 +133,95 @@ function M.render(buf, win)
     return
   end
 
-  local scope_start, scope_end, active_col
+local KEYWORD_SET = {
+  ["if"] = true,
+  ["then"] = true,
+  ["else"] = true,
+  ["elseif"] = true,
+  ["end"] = true,
+  ["function"] = true,
+  ["fn"] = true,
+  ["fun"] = true,
+  ["def"] = true,
+  ["while"] = true,
+  ["do"] = true,
+  ["for"] = true,
+  ["repeat"] = true,
+  ["until"] = true,
+  ["switch"] = true,
+  ["case"] = true,
+  ["class"] = true,
+  ["struct"] = true,
+  ["interface"] = true,
+  ["try"] = true,
+  ["catch"] = true,
+  ["finally"] = true,
+  ["select"] = true,
+  ["where"] = true,
+  ["match"] = true,
+}
+
+--- Recursively collects Treesitter AST keyword node column spans on line_idx.
+---@param node table TSNode
+---@param line_idx integer 0-indexed row
+---@param buf integer Buffer handle
+---@param spans table Array of { s_col, e_col }
+local function collect_ts_keyword_spans(node, line_idx, buf, spans)
+  if not node then return end
+  local s_row, s_col, e_row, e_col = node:range()
+  if s_row > line_idx or e_row < line_idx then
+    return
+  end
+
+  local t_name = node:type()
+  if t_name:find("comment") or t_name:find("string") then
+    return
+  end
+
+  if s_row == line_idx and e_row == line_idx then
+    local text = nil
+    if vim.treesitter and vim.treesitter.get_node_text then
+      local ok_txt, txt = pcall(vim.treesitter.get_node_text, node, buf)
+      if ok_txt and txt then text = txt end
+    end
+    if not text then
+      local ok_l, lines = pcall(nvim_buf_get_lines, buf, line_idx, line_idx + 1, false)
+      if ok_l and lines and lines[1] then
+        text = lines[1]:sub(s_col + 1, e_col)
+      end
+    end
+
+    if text and text:match("^[%a_][%w_]*$") then
+      local is_kw = false
+      if node.named and not node:named() then
+        if KEYWORD_SET[text] or KEYWORD_SET[t_name] then
+          is_kw = true
+        end
+      else
+        if KEYWORD_SET[text] or KEYWORD_SET[t_name] then
+          is_kw = true
+        end
+      end
+
+      if is_kw then
+        table.insert(spans, { s_col, e_col })
+        return
+      end
+    end
+  end
+
+  local child_count = node:child_count()
+  for i = 0, child_count - 1 do
+    local child = node:child(i)
+    if child then
+      collect_ts_keyword_spans(child, line_idx, buf, spans)
+    end
+  end
+end
+
+  local scope_start, scope_end, active_col, scope_node
   if scope_enabled then
-    scope_start, scope_end, active_col = scope.get_scope(buf, win, scope_cfg.treesitter)
+    scope_start, scope_end, active_col, scope_node = scope.get_scope(buf, win, scope_cfg.treesitter)
   end
 
   local start_line = math.max(w0, 1)
@@ -179,6 +284,56 @@ function M.render(buf, win)
         })
       end
 
+      local delims_cfg = config.values.delimiters or {}
+      local delimiters_enabled = delims_cfg.enabled ~= false
+
+      -- Scope boundary delimiter character highlighting
+      if scope_enabled and delimiters_enabled and in_scope_range and (line == scope_start or line == scope_end) then
+        local active_level = math.max(1, math.floor((active_col or width) / width))
+        local colors = (rainbow_cfg and rainbow_cfg.colors) or config.defaults.indent.rainbow.colors
+        local r_idx = (active_level - 1) % #colors + 1
+        local delimiter_hl = delims_cfg.rainbow and ("IndentinatorDelimiter" .. r_idx) or (delims_cfg.hl or "IndentinatorDelimiter")
+
+        for col_idx = 1, #text do
+          local ch = text:sub(col_idx, col_idx)
+          if ch == "{" or ch == "}" or ch == "(" or ch == ")" or ch == "[" or ch == "]" then
+            pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, col_idx - 1, {
+              end_col = col_idx,
+              hl_group = delimiter_hl,
+              priority = priority + 15,
+            })
+          end
+        end
+
+        if delims_cfg.keywords ~= false and scope_node then
+          local spans = {}
+          local visited_spans = {}
+          local function add_spans(n)
+            if not n then return end
+            local s_list = {}
+            collect_ts_keyword_spans(n, line_idx, buf, s_list)
+            for _, s in ipairs(s_list) do
+              local k = s[1] .. ":" .. s[2]
+              if not visited_spans[k] then
+                visited_spans[k] = true
+                table.insert(spans, s)
+              end
+            end
+          end
+
+          add_spans(scope_node)
+          add_spans(scope_node:parent())
+
+          for _, span in ipairs(spans) do
+            pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, span[1], {
+              end_col = span[2],
+              hl_group = delimiter_hl,
+              priority = priority + 15,
+            })
+          end
+        end
+      end
+
       if max_col >= width then
         for col = width, max_col, width do
           local win_col = col - leftcol
@@ -187,23 +342,34 @@ function M.render(buf, win)
             local char, hl
 
             if is_active and scope_enabled then
-              char = scope_cfg.char or "│"
-              if scope_cfg.corners and first_scope_line and last_scope_line and first_scope_line < last_scope_line then
-                if line == first_scope_line and scope_cfg.char_top and scope_cfg.char_top ~= "" then
-                  char = scope_cfg.char_top
-                elseif line == last_scope_line and scope_cfg.char_bottom and scope_cfg.char_bottom ~= "" then
-                  char = scope_cfg.char_bottom
+              if not is_blank or scope_cfg.show_empty ~= false then
+                char = scope_cfg.char or "│"
+                if scope_cfg.corners and first_scope_line and last_scope_line and first_scope_line < last_scope_line then
+                  if line == first_scope_line and scope_cfg.char_top and scope_cfg.char_top ~= "" then
+                    char = scope_cfg.char_top
+                  elseif line == last_scope_line and scope_cfg.char_bottom and scope_cfg.char_bottom ~= "" then
+                    char = scope_cfg.char_bottom
+                  end
                 end
-              end
-              hl = scope_cfg.hl or "IndentinatorScope"
-            elseif indent_enabled then
-              char = indent_cfg.char or "│"
-              if rainbow_enabled then
+
                 local level = math.max(1, math.floor(col / width))
-                local r_idx = (level - 1) % #rainbow_cfg.colors + 1
-                hl = "IndentinatorRainbow" .. r_idx
-              else
-                hl = indent_cfg.hl or "IndentinatorIndent"
+                local colors = (rainbow_cfg and rainbow_cfg.colors) or config.defaults.indent.rainbow.colors
+                local r_idx = (level - 1) % #colors + 1
+                local rainbow_hl = "IndentinatorRainbow" .. r_idx
+
+                -- Corners and vertical scope lines strictly inherit scope line rainbow configuration
+                hl = scope_cfg.rainbow and rainbow_hl or (scope_cfg.hl or "IndentinatorScope")
+              end
+            elseif indent_enabled then
+              if not is_blank or indent_cfg.show_empty ~= false then
+                char = indent_cfg.char or "│"
+                if rainbow_enabled then
+                  local level = math.max(1, math.floor(col / width))
+                  local r_idx = (level - 1) % #rainbow_cfg.colors + 1
+                  hl = "IndentinatorRainbow" .. r_idx
+                else
+                  hl = indent_cfg.hl or "IndentinatorIndent"
+                end
               end
             end
 

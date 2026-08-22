@@ -7,13 +7,26 @@
 
 ---@class IndentinatorIndentConfig
 ---@field enabled boolean Whether normal indent guides across all levels are enabled (default true)
+---@field show_empty boolean Whether normal indent guides render on blank lines (default true)
 ---@field char string Standard guide character (default "│")
 ---@field hl string Highlight group name for standard guides (default "IndentinatorIndent")
 ---@field rainbow IndentinatorRainbowConfig Rainbow indent guides configuration
 
+---@class IndentinatorDelimitersConfig
+---@field enabled boolean Whether boundary delimiter highlighting is enabled (default true)
+---@field keywords boolean Whether Treesitter scope keywords (if, then, end, function, while, do, etc.) are highlighted as delimiters (default true)
+---@field rainbow boolean Whether delimiters use depth-level rainbow colors (default false)
+---@field bold boolean Whether delimiters render in bold (default false)
+---@field italic boolean Whether delimiters render in italic (default false)
+---@field underline boolean Whether delimiters render with underline (default false)
+---@field hl string|nil Optional custom highlight group name for delimiters
+
 ---@class IndentinatorScopeConfig
 ---@field enabled boolean Whether active scope guide highlighting is enabled (default true)
+---@field show_empty boolean Whether scope guide highlighting renders on blank lines (default true)
+---@field rainbow boolean Whether active scope line uses level rainbow colors (default false)
 ---@field char string Active scope guide character (default "│")
+---@field corner_style string Boundary corner style preset ("sharp", "round", "double", "bold") (default "sharp")
 ---@field char_top string Top corner boundary character (default "┌")
 ---@field char_bottom string Bottom corner boundary character (default "└")
 ---@field corners boolean Whether top and bottom boundary corners are rendered (default true)
@@ -26,10 +39,19 @@
 ---@field debounce_ms integer Debounce delay in milliseconds for cursor/scroll updates (default 10)
 ---@field indent IndentinatorIndentConfig Standard indentation guides config
 ---@field scope IndentinatorScopeConfig Active scope guide config
+---@field delimiters IndentinatorDelimitersConfig Scope boundary delimiters config
 ---@field priority integer Extmark priority (default 100)
 ---@field exclude table Excluded filetypes and buftypes
 
 local M = {}
+
+--- Boundary corner character presets mapping
+M.CORNER_PRESETS = {
+  sharp = { char_top = "┌", char_bottom = "└" },
+  round = { char_top = "╭", char_bottom = "╰" },
+  double = { char_top = "╔", char_bottom = "╚" },
+  bold = { char_top = "┏", char_bottom = "┗" },
+}
 
 --- Default configuration values.
 ---@type IndentinatorConfig
@@ -38,6 +60,7 @@ M.defaults = {
   debounce_ms = 10,
   indent = {
     enabled = true,
+    show_empty = true,
     char = "│",
     hl = "IndentinatorIndent",
     rainbow = {
@@ -52,8 +75,20 @@ M.defaults = {
       },
     },
   },
+  delimiters = {
+    enabled = true,
+    keywords = true,
+    rainbow = false,
+    bold = false,
+    italic = false,
+    underline = false,
+    hl = nil,
+  },
   scope = {
     enabled = true,
+    show_empty = true,
+    rainbow = false,
+    corner_style = "sharp",
     char = "│",
     char_top = "┌",
     char_bottom = "└",
@@ -96,8 +131,26 @@ function M.setup(opts)
     M.values.indent.enabled = opts.indent
   end
 
+  if type(opts.delimiters) == "table" then
+    M.values.delimiters = vim.tbl_deep_extend("force", M.values.delimiters, opts.delimiters)
+  elseif type(opts.delimiters) == "boolean" then
+    M.values.delimiters.enabled = opts.delimiters
+  end
+
   if type(opts.scope) == "table" then
     M.values.scope = vim.tbl_deep_extend("force", M.values.scope, opts.scope)
+    if opts.scope.rainbow_delimiters ~= nil then
+      M.values.delimiters.rainbow = opts.scope.rainbow_delimiters
+    end
+    if opts.scope.corner_style and M.CORNER_PRESETS[opts.scope.corner_style] then
+      local preset = M.CORNER_PRESETS[opts.scope.corner_style]
+      if opts.scope.char_top == nil then
+        M.values.scope.char_top = preset.char_top
+      end
+      if opts.scope.char_bottom == nil then
+        M.values.scope.char_bottom = preset.char_bottom
+      end
+    end
   elseif type(opts.scope) == "boolean" then
     M.values.scope.enabled = opts.scope
   end
@@ -112,6 +165,12 @@ function M.setup(opts)
   end
   if opts.treesitter ~= nil then
     M.values.scope.treesitter = opts.treesitter
+  end
+  if opts.scope_rainbow ~= nil then
+    M.values.scope.rainbow = opts.scope_rainbow
+  end
+  if opts.rainbow_delimiters ~= nil then
+    M.values.delimiters.rainbow = opts.rainbow_delimiters
   end
 
   if type(opts.exclude) == "table" then

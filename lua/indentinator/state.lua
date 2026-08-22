@@ -7,7 +7,18 @@ local M = {}
 M.state = {
   enabled = {},
   windows = {},
+  cache = {},
 }
+
+--- Purges scope calculation cache for a buffer or all buffers.
+---@param buf integer|nil Buffer handle (nil clears all cache)
+function M.clear_scope_cache(buf)
+  if buf then
+    M.state.cache[buf] = nil
+  else
+    M.state.cache = {}
+  end
+end
 
 --- Purges internal tracking state associated with a buffer.
 ---@param buf integer|nil Buffer handle
@@ -17,6 +28,7 @@ function M.clear_buf_state(buf)
   end
   M.state.enabled[buf] = nil
   M.state.windows[buf] = nil
+  M.state.cache[buf] = nil
 end
 
 --- Purges tracking state associated with a window.

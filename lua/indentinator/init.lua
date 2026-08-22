@@ -177,8 +177,11 @@ function M.is_enabled(buf)
   return config.is_enabled(buf, state.enabled[buf])
 end
 
+local motion = require("indentinator.motion")
+
 --- Forces a update across active windows.
 function M.force_update()
+  state_mod.clear_scope_cache()
   for_each_active_win(function(win, buf)
     render.render(buf, win)
   end)
@@ -201,7 +204,7 @@ function M.get_current_scope(buf, win)
     return nil
   end
 
-  local start_row, end_row, active_col = scope.get_scope(buf, win, config.values.treesitter)
+  local start_row, end_row, active_col = scope.get_scope(buf, win, config.values.scope and config.values.scope.treesitter)
   if start_row and end_row then
     return {
       scope_start = start_row,
@@ -210,6 +213,28 @@ function M.get_current_scope(buf, win)
     }
   end
   return nil
+end
+
+--- Jumps cursor to top boundary of active scope.
+---@param win integer|nil Window handle
+---@return boolean Success status
+function M.jump_to_scope_start(win)
+  return motion.jump_to_scope_start(win)
+end
+
+--- Jumps cursor to bottom boundary of active scope.
+---@param win integer|nil Window handle
+---@return boolean Success status
+function M.jump_to_scope_end(win)
+  return motion.jump_to_scope_end(win)
+end
+
+--- Selects active scope block in Visual Line mode (`V`).
+---@param inner boolean|nil If true, excludes scope header and footer boundary lines
+---@param win integer|nil Window handle
+---@return boolean Success status
+function M.select_scope(inner, win)
+  return motion.select_scope(inner, win)
 end
 
 return M

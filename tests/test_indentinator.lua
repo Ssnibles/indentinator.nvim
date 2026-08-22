@@ -165,6 +165,223 @@ assert_eq(#plain_marks, 0, "Unindented text at active_col 0 should not have virt
 print("  ✓ Unindented text character protection verified successfully.")
 pcall(vim.api.nvim_buf_delete, plain_buf, { force = true })
 
+-- 9. Test Corner Style Presets ("round", "double", "bold")
+print("[Test 9] Testing Corner Style Presets...")
+ind.setup({
+  scope = {
+    corner_style = "round",
+  },
+})
+assert_eq(ind.config.scope.char_top, "╭", "Round corner char_top failed")
+assert_eq(ind.config.scope.char_bottom, "╰", "Round corner char_bottom failed")
+
+ind.setup({
+  scope = {
+    corner_style = "double",
+  },
+})
+assert_eq(ind.config.scope.char_top, "╔", "Double corner char_top failed")
+assert_eq(ind.config.scope.char_bottom, "╚", "Double corner char_bottom failed")
+print("  ✓ Corner style presets verified successfully.")
+
+-- 10. Test Scope Motions (jump_to_scope_start, jump_to_scope_end, select_scope)
+print("[Test 10] Testing Scope Motions & Text Objects...")
+local motion_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(motion_buf, 0, -1, false, {
+  "function motion_test()",
+  "  if true then",
+  "    local x = 1",
+  "    local y = 2",
+  "  end",
+  "end",
+})
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = motion_buf })
+vim.api.nvim_set_option_value("tabstop", 2, { buf = motion_buf })
+vim.api.nvim_win_set_buf(win, motion_buf)
+vim.api.nvim_win_set_cursor(win, { 3, 4 })
+ind.enable(motion_buf)
+
+local jumped_start = ind.jump_to_scope_start()
+assert_eq(jumped_start, true, "jump_to_scope_start failed")
+local pos_start = vim.api.nvim_win_get_cursor(win)
+assert_eq(pos_start[1], 2, "Expected cursor line 2 after jump_to_scope_start")
+
+vim.api.nvim_win_set_cursor(win, { 3, 4 })
+local jumped_end = ind.jump_to_scope_end()
+assert_eq(jumped_end, true, "jump_to_scope_end failed")
+local pos_end = vim.api.nvim_win_get_cursor(win)
+assert_eq(pos_end[1], 5, "Expected cursor line 5 after jump_to_scope_end")
+
+vim.api.nvim_win_set_cursor(win, { 3, 4 })
+local selected = ind.select_scope(true)
+assert_eq(selected, true, "select_scope failed")
+print("  ✓ Scope motions and text objects verified successfully.")
+pcall(vim.api.nvim_buf_delete, motion_buf, { force = true })
+
+-- 11. Test Scope Caching Layer
+print("[Test 11] Testing Scope Memoization Cache...")
+local cache_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(cache_buf, 0, -1, false, {
+  "function cache_demo()",
+  "  if true then",
+  "    local a = 1",
+  "    local b = 2",
+  "  end",
+  "end",
+})
+vim.api.nvim_set_option_value("filetype", "lua", { buf = cache_buf })
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = cache_buf })
+vim.api.nvim_set_option_value("tabstop", 2, { buf = cache_buf })
+vim.api.nvim_win_set_buf(win, cache_buf)
+vim.api.nvim_win_set_cursor(win, { 3, 4 })
+ind.enable(cache_buf)
+
+local s1 = ind.get_current_scope(cache_buf, win)
+assert_eq(s1 ~= nil, true, "First get_current_scope failed")
+local state_ref = require("indentinator.state")
+assert_eq(state_ref.state.cache[cache_buf] ~= nil, true, "Cache entry should exist for cache_buf")
+
+pcall(vim.api.nvim_buf_delete, cache_buf, { force = true })
+print("  ✓ Scope memoization cache verified successfully.")
+
+-- 12. Test Fine-Grained Blank Line Handling Policies
+print("[Test 12] Testing Blank Line Policy Options...")
+ind.setup({
+  indent = { show_empty = false },
+  scope = { show_empty = false },
+})
+assert_eq(ind.config.indent.show_empty, false, "indent.show_empty failed to merge")
+assert_eq(ind.config.scope.show_empty, false, "scope.show_empty failed to merge")
+print("  ✓ Blank line policy configuration verified successfully.")
+
+-- 13. Test Rainbow Scope Lines, Delimiters Config & Scope Corner Uniformity
+print("[Test 13] Testing Delimiters Configuration & Scope Corner Uniformity...")
+local rainbow_test_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(rainbow_test_buf, 0, -1, false, {
+  "function scope_rainbow_test() {",
+  "  if (true) {",
+  "    print('hello line 1')",
+  "    print('hello line 2')",
+  "  }",
+  "}",
+})
+vim.api.nvim_set_option_value("filetype", "lua", { buf = rainbow_test_buf })
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = rainbow_test_buf })
+vim.api.nvim_win_set_buf(win, rainbow_test_buf)
+vim.api.nvim_win_set_cursor(win, { 3, 4 })
+ind.enable(rainbow_test_buf)
+
+-- Case A: scope.rainbow = true, delimiters.bold = true, delimiters.italic = true, delimiters.underline = true
+ind.setup({
+  scope = {
+    enabled = true,
+    rainbow = true,
+  },
+  delimiters = {
+    enabled = true,
+    rainbow = false,
+    bold = true,
+    italic = true,
+    underline = true,
+  },
+})
+ind.force_update()
+
+local marks_a_corner = vim.api.nvim_buf_get_extmarks(rainbow_test_buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true })
+assert_eq(#marks_a_corner > 0, true, "Extmarks should exist for line 3")
+assert_eq(marks_a_corner[1][4].virt_text[1][2], "IndentinatorRainbow1", "Scope line & top corner should use IndentinatorRainbow1 when scope.rainbow=true")
+
+local delim_hl_info = vim.api.nvim_get_hl(0, { name = "IndentinatorDelimiter" })
+assert_eq(delim_hl_info.bold, true, "IndentinatorDelimiter should have bold=true")
+assert_eq(delim_hl_info.italic, true, "IndentinatorDelimiter should have italic=true")
+assert_eq(delim_hl_info.underline, true, "IndentinatorDelimiter should have underline=true")
+
+-- Case B: scope.rainbow = false, delimiters.rainbow = true (Corners MUST match scope line IndentinatorScope, NOT delimiters!)
+ind.setup({
+  scope = {
+    enabled = true,
+    rainbow = false,
+  },
+  delimiters = {
+    enabled = true,
+    rainbow = true,
+  },
+})
+ind.force_update()
+
+-- Line 2 (0-indexed 1) is scope_start with delimiters `(`, `)`, `{`
+local marks_b_start = vim.api.nvim_buf_get_extmarks(rainbow_test_buf, render.NS, { 1, 0 }, { 1, -1 }, { details = true })
+-- Line 3 (0-indexed 2) is first body line with top corner `┌`
+local marks_b_topcorner = vim.api.nvim_buf_get_extmarks(rainbow_test_buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true })
+
+local delim_hl = nil
+for _, m in ipairs(marks_b_start) do
+  if m[4].hl_group then
+    delim_hl = m[4].hl_group
+  end
+end
+
+assert_eq(delim_hl, "IndentinatorDelimiter1", "Delimiter bracket should use IndentinatorDelimiter1 when delimiters.rainbow=true")
+assert_eq(marks_b_topcorner[1][4].virt_text[1][2], "IndentinatorScope", "Top corner MUST use IndentinatorScope when scope.rainbow=false")
+print("  ✓ Delimiters config (bold, italic, underline, rainbow) & scope corner uniformity verified successfully.")
+
+pcall(vim.api.nvim_buf_delete, rainbow_test_buf, { force = true })
+
+-- 14. Test Treesitter Keyword Scope Delimiters
+print("[Test 14] Testing Treesitter Keyword Scope Delimiters...")
+local ts_kw_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(ts_kw_buf, 0, -1, false, {
+  "function keyword_demo()",
+  "  local text_data = 'if then end' -- comment with while and for",
+  "  if true then",
+  "    print(text_data)",
+  "  end",
+  "end",
+})
+vim.api.nvim_set_option_value("filetype", "lua", { buf = ts_kw_buf })
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = ts_kw_buf })
+vim.api.nvim_win_set_buf(win, ts_kw_buf)
+vim.api.nvim_win_set_cursor(win, { 4, 4 })
+ind.enable(ts_kw_buf)
+
+ind.setup({
+  scope = { enabled = true, treesitter = true },
+  delimiters = { enabled = true, keywords = true, rainbow = true },
+})
+ind.force_update()
+
+-- Line 3 (0-indexed 2) is `if true then` (scope_start for if statement)
+local marks_if_line = vim.api.nvim_buf_get_extmarks(ts_kw_buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true })
+local if_kw_count = 0
+for _, m in ipairs(marks_if_line) do
+  if m[4].hl_group and m[4].hl_group:find("IndentinatorDelimiter") then
+    if_kw_count = if_kw_count + 1
+  end
+end
+assert_eq(if_kw_count >= 2, true, "Both 'if' and 'then' keywords on scope start boundary should receive delimiter extmarks")
+
+-- Line 5 (0-indexed 4) is `end` (scope_end for block)
+local marks_end_line = vim.api.nvim_buf_get_extmarks(ts_kw_buf, render.NS, { 4, 0 }, { 4, -1 }, { details = true })
+local end_kw_count = 0
+for _, m in ipairs(marks_end_line) do
+  if m[4].hl_group and m[4].hl_group:find("IndentinatorDelimiter") then
+    end_kw_count = end_kw_count + 1
+  end
+end
+assert_eq(end_kw_count >= 1, true, "Treesitter keyword 'end' on scope boundary should receive delimiter extmark")
+
+-- Line 2 (0-indexed 1) is `local text_data = 'if then end' -- comment with while and for`
+local marks_str_line = vim.api.nvim_buf_get_extmarks(ts_kw_buf, render.NS, { 1, 0 }, { 1, -1 }, { details = true })
+local str_kw_count = 0
+for _, m in ipairs(marks_str_line) do
+  if m[4].hl_group and m[4].hl_group:find("IndentinatorDelimiter") then
+    str_kw_count = str_kw_count + 1
+  end
+end
+assert_eq(str_kw_count, 0, "Keywords inside string/comment MUST NOT receive delimiter extmarks")
+print("  ✓ Treesitter keyword scope delimiters verified successfully without string/comment false positives.")
+
+pcall(vim.api.nvim_buf_delete, ts_kw_buf, { force = true })
 pcall(vim.api.nvim_buf_delete, buf, { force = true })
 
 print("=== All Indentinator Tests Passed Successfully! ===")

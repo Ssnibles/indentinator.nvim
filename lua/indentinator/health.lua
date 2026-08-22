@@ -36,15 +36,20 @@ function M.check()
   local scope_cfg = c.scope or {}
   local rainbow_cfg = ind_cfg.rainbow or {}
 
+  local delim_cfg = c.delimiters or {}
+
   health.info(("enabled=%s debounce_ms=%d priority=%s"):format(
     tostring(c.enabled), c.debounce_ms or 0, tostring(c.priority)
   ))
-  health.info(("indent.enabled=%s indent.char=%q indent.hl=%s rainbow.enabled=%s"):format(
-    tostring(ind_cfg.enabled), tostring(ind_cfg.char), tostring(ind_cfg.hl), tostring(rainbow_cfg.enabled)
+  health.info(("indent.enabled=%s indent.show_empty=%s indent.char=%q indent.hl=%s rainbow.enabled=%s"):format(
+    tostring(ind_cfg.enabled), tostring(ind_cfg.show_empty), tostring(ind_cfg.char), tostring(ind_cfg.hl), tostring(rainbow_cfg.enabled)
   ))
-  health.info(("scope.enabled=%s scope.char=%q corners=%s (top=%q, bot=%q) scope.treesitter=%s"):format(
-    tostring(scope_cfg.enabled), tostring(scope_cfg.char), tostring(scope_cfg.corners),
+  health.info(("scope.enabled=%s scope.show_empty=%s rainbow=%s scope.char=%q corner_style=%q corners=%s (top=%q, bot=%q) scope.treesitter=%s"):format(
+    tostring(scope_cfg.enabled), tostring(scope_cfg.show_empty), tostring(scope_cfg.rainbow), tostring(scope_cfg.char), tostring(scope_cfg.corner_style), tostring(scope_cfg.corners),
     tostring(scope_cfg.char_top), tostring(scope_cfg.char_bottom), tostring(scope_cfg.treesitter)
+  ))
+  health.info(("delimiters.enabled=%s rainbow=%s bold=%s italic=%s underline=%s hl=%s"):format(
+    tostring(delim_cfg.enabled), tostring(delim_cfg.rainbow), tostring(delim_cfg.bold), tostring(delim_cfg.italic), tostring(delim_cfg.underline), tostring(delim_cfg.hl)
   ))
 
   if scope_cfg.treesitter then
