@@ -6,6 +6,7 @@ local state_mod = require("indentinator.state")
 local state = state_mod.state
 local render = require("indentinator.render")
 local scope = require("indentinator.scope")
+local motion = require("indentinator.motion")
 
 local api = vim.api
 local nvim_get_current_win = api.nvim_get_current_win
@@ -132,6 +133,7 @@ end
 ---@param opts table|nil User options
 function M.setup(opts)
   config.setup(opts)
+  M.config = config.values
   render.set_hl()
 
   if not M._setup_done then
@@ -179,9 +181,7 @@ function M.is_enabled(buf)
   return config.is_enabled(buf, state.enabled[buf])
 end
 
-local motion = require("indentinator.motion")
-
---- Forces a update across active windows.
+--- Forces an update across active windows.
 function M.force_update()
   state_mod.clear_scope_cache()
   for_each_active_win(function(win, buf)
@@ -218,14 +218,14 @@ function M.get_current_scope(buf, win)
   return nil
 end
 
---- Jumps cursor to top boundary of active scope.
+--- Jumps cursor to top boundary of active scope (or parent scope if already at top).
 ---@param win integer|nil Window handle
 ---@return boolean Success status
 function M.jump_to_scope_start(win)
   return motion.jump_to_scope_start(win)
 end
 
---- Jumps cursor to bottom boundary of active scope.
+--- Jumps cursor to bottom boundary of active scope (or parent scope if already at bottom).
 ---@param win integer|nil Window handle
 ---@return boolean Success status
 function M.jump_to_scope_end(win)

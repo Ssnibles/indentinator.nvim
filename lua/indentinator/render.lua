@@ -1,9 +1,10 @@
 --- Extmark renderer module for indentinator.nvim.
 --- Handles extmark drawing for standard indent guides, rainbow colors, scope corners,
---- and header highlights. Optimised for minimal allocations in the render loop.
+--- and boundary highlights. Optimised for minimal allocations and linear viewport passes.
 
 local config = require("indentinator.config")
-local state = require("indentinator.state").state
+local state_mod = require("indentinator.state")
+local state = state_mod.state
 local scope = require("indentinator.scope")
 local utils = require("indentinator.utils")
 
@@ -35,6 +36,50 @@ DELIM_BYTES[byte(")")] = true
 DELIM_BYTES[byte("[")] = true
 DELIM_BYTES[byte("]")] = true
 
+--- Keyword lookup table for scope boundary tokens
+local KEYWORD_SET = {
+  ["if"] = true,
+  ["then"] = true,
+  ["else"] = true,
+  ["elseif"] = true,
+  ["elif"] = true,
+  ["end"] = true,
+  ["fi"] = true,
+  ["done"] = true,
+  ["esac"] = true,
+  ["function"] = true,
+  ["fn"] = true,
+  ["fun"] = true,
+  ["func"] = true,
+  ["def"] = true,
+  ["while"] = true,
+  ["do"] = true,
+  ["for"] = true,
+  ["repeat"] = true,
+  ["until"] = true,
+  ["loop"] = true,
+  ["switch"] = true,
+  ["case"] = true,
+  ["class"] = true,
+  ["struct"] = true,
+  ["interface"] = true,
+  ["impl"] = true,
+  ["trait"] = true,
+  ["enum"] = true,
+  ["try"] = true,
+  ["catch"] = true,
+  ["except"] = true,
+  ["finally"] = true,
+  ["with"] = true,
+  ["begin"] = true,
+  ["rescue"] = true,
+  ["ensure"] = true,
+  ["unless"] = true,
+  ["select"] = true,
+  ["where"] = true,
+  ["match"] = true,
+}
+
 --- Initialises default highlight groups for standard indent, scope, and rainbow guides.
 function M.set_hl()
   api.nvim_set_hl(0, "IndentinatorIndent", {
@@ -62,8 +107,9 @@ function M.set_hl()
     underline = underline_opt,
   })
 
-  if rainbow_cfg and type(rainbow_cfg.colors) == "table" then
-    for idx, hex in ipairs(rainbow_cfg.colors) do
+  local rainbow_colors = (rainbow_cfg and rainbow_cfg.colors) or config.defaults.indent.rainbow.colors
+  if type(rainbow_colors) == "table" then
+    for idx, hex in ipairs(rainbow_colors) do
       api.nvim_set_hl(0, "IndentinatorRainbow" .. idx, {
         fg = hex,
         bg = "NONE",
@@ -85,40 +131,41 @@ end
 function M.clear(buf)
   if buf and nvim_buf_is_valid(buf) then
     pcall(nvim_buf_clear_namespace, buf, M.NS, 0, -1)
+    if state.rendered then
+      state.rendered[buf] = nil
+    end
   end
 end
 
-
-local KEYWORD_SET = {
-  ["if"] = true,
-  ["then"] = true,
-  ["else"] = true,
-  ["elseif"] = true,
-  ["end"] = true,
-  ["function"] = true,
-  ["fn"] = true,
-  ["fun"] = true,
-  ["def"] = true,
-  ["while"] = true,
-  ["do"] = true,
-  ["for"] = true,
-  ["repeat"] = true,
-  ["until"] = true,
-  ["switch"] = true,
-  ["case"] = true,
-  ["class"] = true,
-  ["struct"] = true,
-  ["interface"] = true,
-  ["try"] = true,
-  ["catch"] = true,
-  ["finally"] = true,
-  ["select"] = true,
-  ["where"] = true,
-  ["match"] = true,
-}
+--- Checks if a character column is within a comment or string node in Treesitter.
+---@param scope_node table|nil
+---@param line_idx integer 0-indexed row
+---@param col integer 0-indexed byte column
+---@return boolean
+local function is_comment_or_string(scope_node, line_idx, col)
+  if not scope_node then
+    return false
+  end
+  local ok, desc = pcall(function()
+    return scope_node:descendant_for_range(line_idx, col, line_idx, col + 1)
+  end)
+  if ok and desc then
+    local t = desc:type()
+    if t:find("comment") or t:find("string") then
+      return true
+    end
+    local parent = desc:parent()
+    if parent then
+      local pt = parent:type()
+      if pt:find("comment") or pt:find("string") then
+        return true
+      end
+    end
+  end
+  return false
+end
 
 --- Recursively collects Treesitter AST keyword node column spans on line_idx.
---- Skips comment and string nodes. Uses named_child_count for leaf-node fast path.
 ---@param node table TSNode
 ---@param line_idx integer 0-indexed row
 ---@param bufnr integer Buffer handle
@@ -178,16 +225,18 @@ local function render_delimiters(buf, line_idx, text, scope_node, delimiter_hl, 
     local c_idx = i - 1
     if c_idx >= delim_min_col and c_idx <= delim_max_col then
       if DELIM_BYTES[byte(text, i)] then
-        pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, c_idx, {
-          end_col = i,
-          hl_group = delimiter_hl,
-          priority = priority + 15,
-        })
+        if not is_comment_or_string(scope_node, line_idx, c_idx) then
+          pcall(nvim_buf_set_extmark, buf, M.NS, line_idx, c_idx, {
+            end_col = i,
+            hl_group = delimiter_hl,
+            priority = priority + 15,
+          })
+        end
       end
     end
   end
 
-  -- Collect and highlight Treesitter keyword spans
+  -- Highlight Treesitter keyword spans
   if delims_cfg.keywords ~= false and scope_node then
     local spans = {}
     collect_ts_keyword_spans(scope_node, line_idx, buf, spans)
@@ -204,8 +253,139 @@ local function render_delimiters(buf, line_idx, text, scope_node, delimiter_hl, 
   end
 end
 
+--- Efficiently finds the first and last inner scope body lines.
+--- Performs short boundary scans instead of iterating entire scopes.
+---@param buf integer
+---@param scope_start integer
+---@param scope_end integer
+---@param active_col integer
+---@param tabstop integer
+---@param all_lines table
+---@param start_line integer
+---@param end_line integer
+---@return integer|nil first_scope_line
+---@return integer|nil last_scope_line
+local function find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop, all_lines, start_line, end_line)
+  if scope_start >= scope_end then
+    return nil, nil
+  end
+
+  local function get_line_width(line_num)
+    local batch_idx = line_num - start_line + 1
+    local line_text
+    if batch_idx >= 1 and batch_idx <= #all_lines then
+      line_text = all_lines[batch_idx]
+    else
+      local ok_l, fetched = pcall(nvim_buf_get_lines, buf, line_num - 1, line_num, false)
+      if ok_l and fetched and fetched[1] then
+        line_text = fetched[1]
+      end
+    end
+
+    if not line_text then
+      return nil
+    end
+
+    local lead = line_text:match("^%s*") or ""
+    local is_blank = (line_text == "" or #lead == #line_text)
+    return is_blank and 9999 or utils.lead_display_width(lead, tabstop)
+  end
+
+  -- Search downward from scope_start + 1 for first body line
+  local first_scope_line = nil
+  local scan_limit_down = math.min(scope_end, scope_start + 30)
+  for l = scope_start + 1, scan_limit_down do
+    local lw = get_line_width(l)
+    if lw and active_col < lw then
+      first_scope_line = l
+      break
+    end
+  end
+
+  -- Search upward from scope_end - 1 down to scope_start + 1 for last body line
+  local last_scope_line = nil
+  local scan_limit_up = math.max(scope_start + 1, scope_end - 30)
+  -- Also check scope_end itself if it's an unclosed block body
+  local lw_end = get_line_width(scope_end)
+  if lw_end and active_col < lw_end then
+    last_scope_line = scope_end
+  else
+    for l = scope_end - 1, scan_limit_up, -1 do
+      local lw = get_line_width(l)
+      if lw and active_col < lw then
+        last_scope_line = l
+        break
+      end
+    end
+  end
+
+  return first_scope_line, last_scope_line
+end
+
+--- Computes visual indent widths for all lines in the viewport batch.
+--- Resolves blank lines with single-pass lookups avoiding repeated buffer RPCs.
+---@param buf integer
+---@param all_lines table Array of string lines in viewport
+---@param start_line integer 1-indexed first line of batch
+---@param total_lines integer Total line count in buffer
+---@param tabstop integer
+---@return integer[] target_widths Array of target display widths
+local function compute_batch_widths(buf, all_lines, start_line, total_lines, tabstop)
+  local n = #all_lines
+  local widths = {}
+  local is_blank_flags = {}
+
+  for i = 1, n do
+    local text = all_lines[i]
+    local lead = text:match("^%s*") or ""
+    local is_b = (text == "" or #lead == #text)
+    is_blank_flags[i] = is_b
+    if not is_b then
+      widths[i] = utils.lead_display_width(lead, tabstop)
+    end
+  end
+
+  -- Fill in blank lines by inspecting nearest non-blank neighbours
+  local i = 1
+  while i <= n do
+    if is_blank_flags[i] then
+      local run_start = i
+      while i <= n and is_blank_flags[i] do
+        i = i + 1
+      end
+      local run_end = i - 1
+
+      -- Find preceding non-blank width
+      local up_w = 0
+      if run_start > 1 then
+        up_w = widths[run_start - 1]
+      else
+        local _, up_lead = utils.find_non_blank_up(buf, start_line - 1, 100)
+        up_w = up_lead and utils.lead_display_width(up_lead, tabstop) or 0
+      end
+
+      -- Find following non-blank width
+      local down_w = 0
+      if run_end < n then
+        down_w = widths[run_end + 1]
+      else
+        local _, down_lead = utils.find_non_blank_down(buf, start_line + run_end, total_lines, 100)
+        down_w = down_lead and utils.lead_display_width(down_lead, tabstop) or 0
+      end
+
+      local target = math.min(up_w, down_w)
+      for k = run_start, run_end do
+        widths[k] = target
+      end
+    else
+      i = i + 1
+    end
+  end
+
+  return widths, is_blank_flags
+end
+
 --- Renders indent and scope guides for visible lines in a window.
---- Uses batch line fetching and fold-aware skipping to minimise API calls.
 ---@param buf integer Buffer handle
 ---@param win integer Window handle
 function M.render(buf, win)
@@ -218,7 +398,6 @@ function M.render(buf, win)
     return
   end
 
-  -- Large-file bailout
   local total_lines = nvim_buf_line_count(buf)
   local max_lines = config.values.max_file_lines or 10000
   if total_lines > max_lines then
@@ -262,12 +441,17 @@ function M.render(buf, win)
   local start_line = math.max(1, w0)
   local end_line = math.min(total_lines, w1)
 
-  -- Clear only the viewport range we are about to re-render
-  pcall(nvim_buf_clear_namespace, buf, M.NS, start_line - 1, end_line)
+  -- Clear previous and current viewport ranges to avoid ghost marks when scrolling
+  local prev = state.rendered and state.rendered[buf] or nil
+  local clear_start = prev and math.min(prev[1], start_line) or start_line
+  local clear_end = prev and math.max(prev[2], end_line) or end_line
+  pcall(nvim_buf_clear_namespace, buf, M.NS, clear_start - 1, clear_end)
+  state.rendered = state.rendered or {}
+  state.rendered[buf] = { start_line, end_line }
 
-  -- Batch-fetch all visible lines in a single API call
+  -- Batch-fetch all visible lines
   local ok_lines, all_lines = pcall(nvim_buf_get_lines, buf, start_line - 1, end_line, false)
-  if not ok_lines or not all_lines then
+  if not ok_lines or not all_lines or #all_lines == 0 then
     return
   end
 
@@ -277,66 +461,36 @@ function M.render(buf, win)
     scope_start, scope_end, active_col, scope_node = scope.get_scope(buf, win, scope_cfg.treesitter)
   end
 
-  -- Pre-compute first/last scope body lines from the batch
+  -- Pre-compute first/last scope body lines for corner rendering
   local first_scope_line, last_scope_line
   if scope_enabled and scope_start and scope_end and scope_start < scope_end then
-    for l = scope_start, scope_end do
-      local batch_idx = l - start_line + 1
-      local line_text
-      if batch_idx >= 1 and batch_idx <= #all_lines then
-        line_text = all_lines[batch_idx]
-      else
-        -- Line is outside viewport batch; fetch individually
-        local ok_l, fetched = pcall(nvim_buf_get_lines, buf, l - 1, l, false)
-        if ok_l and fetched and fetched[1] then
-          line_text = fetched[1]
-        end
-      end
-
-      if line_text then
-        local lead = line_text:match("^%s*") or ""
-        local is_b = (line_text == "" or #lead == #line_text)
-        local lw = is_b and 9999 or utils.lead_display_width(lead, tabstop)
-        if active_col and active_col < lw then
-          if not first_scope_line then first_scope_line = l end
-          last_scope_line = l
-        end
-      end
-    end
+    first_scope_line, last_scope_line = find_first_last_scope_lines(
+      buf, scope_start, scope_end, active_col, tabstop, all_lines, start_line, end_line
+    )
   end
 
   local delims_cfg = config.values.delimiters or {}
   local delimiters_enabled = scope_enabled and delims_cfg.enabled ~= false
 
-  -- Pre-compute rainbow color count once
   local rainbow_colors = (rainbow_cfg and rainbow_cfg.colors) or config.defaults.indent.rainbow.colors
   local rainbow_count = #rainbow_colors
 
-  -- Main render loop: iterate over batch-fetched lines
+  -- Pre-compute indent display widths for batch
+  local target_widths, is_blank_flags = compute_batch_widths(buf, all_lines, start_line, total_lines, tabstop)
+
   for i = 1, #all_lines do
     local line = start_line + i - 1
     local line_idx = line - 1
 
-    -- Skip lines inside closed folds (only render fold header)
+    -- Skip lines inside closed folds
     local fold_start = fn_foldclosed(line)
     if fold_start ~= -1 and fold_start ~= line then
       goto continue
     end
 
     local text = all_lines[i]
-    local lead = text:match("^%s*") or ""
-    local is_blank = (text == "" or #lead == #text)
-
-    local target_width
-    if not is_blank then
-      target_width = utils.lead_display_width(lead, tabstop)
-    else
-      local _, up_lead = utils.find_non_blank_up(buf, line_idx)
-      local _, down_lead = utils.find_non_blank_down(buf, line + 1, total_lines)
-      local up_w = up_lead and utils.lead_display_width(up_lead, tabstop) or 0
-      local down_w = down_lead and utils.lead_display_width(down_lead, tabstop) or 0
-      target_width = math.min(up_w, down_w)
-    end
+    local is_blank = is_blank_flags[i]
+    local target_width = target_widths[i]
 
     local in_scope_range = scope_start and scope_end and (line >= scope_start and line <= scope_end)
     local max_col = target_width - (is_blank and 0 or width)
@@ -384,7 +538,6 @@ function M.render(buf, win)
               local r_idx = (level - 1) % rainbow_count + 1
               local rainbow_hl = "IndentinatorRainbow" .. r_idx
 
-              -- Corners and vertical scope lines strictly inherit scope line rainbow configuration
               hl = scope_cfg.rainbow and rainbow_hl or (scope_cfg.hl or "IndentinatorScope")
             end
           elseif indent_enabled then
@@ -414,9 +567,6 @@ function M.render(buf, win)
 
     ::continue::
   end
-
-  state.windows[buf] = state.windows[buf] or {}
-  state.windows[buf][win] = { w0, w1 }
 end
 
 --- Renders scope guides for all windows displaying a buffer.
