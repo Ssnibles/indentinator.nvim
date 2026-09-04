@@ -1,49 +1,5 @@
 --- Configuration module for indentinator.nvim.
---- Handles user settings, defaults, and buffer enablement checks for indent and scope guides.
-
----@class IndentinatorRainbowConfig
----@field enabled boolean Whether rainbow indent colors are enabled (default false)
----@field colors string[] Array of hex color strings for rainbow levels
-
----@class IndentinatorIndentConfig
----@field enabled boolean Whether normal indent guides across all levels are enabled (default true)
----@field show_empty boolean Whether normal indent guides render on blank lines (default true)
----@field char string Standard guide character (default "│")
----@field hl string Highlight group name for standard guides (default "IndentinatorIndent")
----@field rainbow IndentinatorRainbowConfig Rainbow indent guides configuration
-
----@class IndentinatorDelimitersConfig
----@field enabled boolean Whether boundary delimiter highlighting is enabled (default true)
----@field keywords boolean Whether Treesitter scope keywords (if, then, end, function, etc.)
----  are highlighted as delimiters (default true)
----@field rainbow boolean Whether delimiters use depth-level rainbow colors (default false)
----@field bold boolean Whether delimiters render in bold (default false)
----@field italic boolean Whether delimiters render in italic (default false)
----@field underline boolean Whether delimiters render with underline (default false)
----@field hl string|nil Optional custom highlight group name for delimiters
-
----@class IndentinatorScopeConfig
----@field enabled boolean Whether active scope guide highlighting is enabled (default true)
----@field show_empty boolean Whether scope guide highlighting renders on blank lines (default true)
----@field rainbow boolean Whether active scope line uses level rainbow colors (default false)
----@field char string Active scope guide character (default "│")
----@field corner_style string Boundary corner style preset ("sharp", "round", "double", "bold") (default "sharp")
----@field char_top string Top corner boundary character (default "┌")
----@field char_bottom string Bottom corner boundary character (default "└")
----@field corners boolean Whether top and bottom boundary corners are rendered (default true)
----@field hl string Highlight group name for active scope guide (default "IndentinatorScope")
----@field hl_header string|nil Optional highlight group name for scope header line
----@field treesitter boolean Whether Treesitter scope detection is enabled (default true)
-
----@class IndentinatorConfig
----@field enabled boolean Whether plugin is globally enabled
----@field debounce_ms integer Debounce delay in milliseconds for cursor/scroll updates (default 10)
----@field max_file_lines integer Maximum file line count before rendering is skipped (default 10000)
----@field indent IndentinatorIndentConfig Standard indentation guides config
----@field scope IndentinatorScopeConfig Active scope guide config
----@field delimiters IndentinatorDelimitersConfig Scope boundary delimiters config
----@field priority integer Extmark priority (default 100)
----@field exclude table Excluded filetypes and buftypes
+--- Handles user settings, defaults, corner presets, and buffer enablement checks.
 
 local api = vim.api
 
@@ -58,7 +14,6 @@ M.CORNER_PRESETS = {
 }
 
 --- Default configuration values.
----@type IndentinatorConfig
 M.defaults = {
   enabled = true,
   debounce_ms = 10,
@@ -110,8 +65,25 @@ M.defaults = {
 }
 
 --- Active plugin configuration values.
----@type IndentinatorConfig
 M.values = vim.deepcopy(M.defaults)
+
+--- Fast lookup sets for excluded buftypes and filetypes.
+local exclude_buftypes_set = {}
+local exclude_filetypes_set = {}
+
+local function rebuild_exclude_sets()
+  exclude_buftypes_set = {}
+  exclude_filetypes_set = {}
+  if M.values.exclude then
+    for _, bt in ipairs(M.values.exclude.buftypes or {}) do
+      exclude_buftypes_set[bt] = true
+    end
+    for _, ft in ipairs(M.values.exclude.filetypes or {}) do
+      exclude_filetypes_set[ft] = true
+    end
+  end
+end
+rebuild_exclude_sets()
 
 --- Merges user options into configuration values.
 ---@param opts table|nil User configuration options
@@ -120,50 +92,22 @@ function M.setup(opts)
     return
   end
 
-  if opts.enabled ~= nil then
-    M.values.enabled = opts.enabled
+  -- Handle boolean shorthand configs before merging
+  local normalised = vim.deepcopy(opts)
+  if type(normalised.indent) == "boolean" then
+    normalised.indent = { enabled = normalised.indent }
   end
-  if opts.debounce_ms ~= nil then
-    M.values.debounce_ms = opts.debounce_ms
+  if type(normalised.scope) == "boolean" then
+    normalised.scope = { enabled = normalised.scope }
   end
-  if opts.max_file_lines ~= nil then
-    M.values.max_file_lines = opts.max_file_lines
-  end
-  if opts.priority ~= nil then
-    M.values.priority = opts.priority
-  end
-
-  if type(opts.indent) == "table" then
-    M.values.indent = vim.tbl_deep_extend("force", M.values.indent, opts.indent)
-  elseif type(opts.indent) == "boolean" then
-    M.values.indent.enabled = opts.indent
+  if type(normalised.delimiters) == "boolean" then
+    normalised.delimiters = { enabled = normalised.delimiters }
   end
 
-  if type(opts.delimiters) == "table" then
-    M.values.delimiters = vim.tbl_deep_extend("force", M.values.delimiters, opts.delimiters)
-  elseif type(opts.delimiters) == "boolean" then
-    M.values.delimiters.enabled = opts.delimiters
-  end
+  -- Deep merge normalised options
+  M.values = vim.tbl_deep_extend("force", M.values, normalised)
 
-  if type(opts.scope) == "table" then
-    M.values.scope = vim.tbl_deep_extend("force", M.values.scope, opts.scope)
-    if opts.scope.rainbow_delimiters ~= nil then
-      M.values.delimiters.rainbow = opts.scope.rainbow_delimiters
-    end
-    if opts.scope.corner_style and M.CORNER_PRESETS[opts.scope.corner_style] then
-      local preset = M.CORNER_PRESETS[opts.scope.corner_style]
-      if opts.scope.char_top == nil then
-        M.values.scope.char_top = preset.char_top
-      end
-      if opts.scope.char_bottom == nil then
-        M.values.scope.char_bottom = preset.char_bottom
-      end
-    end
-  elseif type(opts.scope) == "boolean" then
-    M.values.scope.enabled = opts.scope
-  end
-
-  -- Flat options support for convenience
+  -- Flat options support for user convenience
   if opts.char then
     M.values.indent.char = opts.char
     M.values.scope.char = opts.char
@@ -180,49 +124,23 @@ function M.setup(opts)
   if opts.rainbow_delimiters ~= nil then
     M.values.delimiters.rainbow = opts.rainbow_delimiters
   end
+  if type(opts.scope) == "table" and opts.scope.rainbow_delimiters ~= nil then
+    M.values.delimiters.rainbow = opts.scope.rainbow_delimiters
+  end
 
-  if type(opts.exclude) == "table" then
-    if opts.exclude.filetypes then
-      M.values.exclude.filetypes = opts.exclude.filetypes
+  -- Apply corner preset if specified and characters were not explicitly provided
+  local scope_opt = type(opts.scope) == "table" and opts.scope or nil
+  if scope_opt and scope_opt.corner_style and M.CORNER_PRESETS[scope_opt.corner_style] then
+    local preset = M.CORNER_PRESETS[scope_opt.corner_style]
+    if scope_opt.char_top == nil then
+      M.values.scope.char_top = preset.char_top
     end
-    if opts.exclude.buftypes then
-      M.values.exclude.buftypes = opts.exclude.buftypes
+    if scope_opt.char_bottom == nil then
+      M.values.scope.char_bottom = preset.char_bottom
     end
   end
-end
 
---- Pre-built set of excluded buftypes for O(1) lookup.
----@param buf integer Buffer handle
----@return boolean True if buftype is excluded
-local function is_buftype_excluded(buf)
-  local ok, bt = pcall(function() return vim.bo[buf].buftype end)
-  if not ok or type(bt) ~= "string" or bt == "" then
-    return false
-  end
-  local excluded = M.values.exclude.buftypes or {}
-  for _, ex_bt in ipairs(excluded) do
-    if bt == ex_bt then
-      return true
-    end
-  end
-  return false
-end
-
---- Checks if a buffer filetype is excluded.
----@param buf integer Buffer handle
----@return boolean True if filetype is excluded
-local function is_filetype_excluded(buf)
-  local ok, ft = pcall(function() return vim.bo[buf].filetype end)
-  if not ok or type(ft) ~= "string" or ft == "" then
-    return false
-  end
-  local excluded = M.values.exclude.filetypes or {}
-  for _, ex_ft in ipairs(excluded) do
-    if ft == ex_ft then
-      return true
-    end
-  end
-  return false
+  rebuild_exclude_sets()
 end
 
 --- Checks if plugin features are enabled for a given buffer.
@@ -242,11 +160,13 @@ function M.is_enabled(buf, state_enabled)
     return false
   end
 
-  if is_buftype_excluded(buf) then
+  local ok_bt, bt = pcall(api.nvim_get_option_value, "buftype", { buf = buf })
+  if ok_bt and type(bt) == "string" and bt ~= "" and exclude_buftypes_set[bt] then
     return false
   end
 
-  if is_filetype_excluded(buf) then
+  local ok_ft, ft = pcall(api.nvim_get_option_value, "filetype", { buf = buf })
+  if ok_ft and type(ft) == "string" and ft ~= "" and exclude_filetypes_set[ft] then
     return false
   end
 

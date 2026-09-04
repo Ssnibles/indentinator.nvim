@@ -13,7 +13,7 @@ function M.get_buf_opt(buf, opt)
   if not buf or not api.nvim_buf_is_valid(buf) then
     return nil
   end
-  local ok, val = pcall(function() return vim.bo[buf][opt] end)
+  local ok, val = pcall(api.nvim_get_option_value, opt, { buf = buf })
   if ok and type(val) == "number" and val > 0 then
     return val
   end
@@ -54,7 +54,7 @@ function M.lead_display_width(lead, tabstop)
 
   local display_col = 0
   for i = 1, #lead do
-    if lead:byte(i) == 9 then -- Tab character ASCII
+    if lead:byte(i) == 9 then
       display_col = display_col + (tabstop - (display_col % tabstop))
     else
       display_col = display_col + 1
@@ -66,20 +66,21 @@ end
 --- Scans upwards from start_row to find nearest non-blank line.
 ---@param buf integer Buffer handle
 ---@param start_row integer Starting line row (1-indexed)
+---@param max_depth integer|nil Maximum lines to search upward
 ---@return string|nil text Line text
 ---@return string|nil lead Leading whitespace string
 ---@return integer|nil row Line row index (1-indexed)
-function M.find_non_blank_up(buf, start_row)
+function M.find_non_blank_up(buf, start_row, max_depth)
   if not buf or not api.nvim_buf_is_valid(buf) or start_row < 1 then
     return nil
   end
 
-  local max_depth = 2000
-  local current = start_row
+  max_depth = max_depth or 1000
   local min_allowed = math.max(1, start_row - max_depth)
+  local current = start_row
 
   while current >= min_allowed do
-    local chunk_start = math.max(min_allowed, current - 50 + 1)
+    local chunk_start = math.max(min_allowed, current - 64 + 1)
     local ok, lines = pcall(api.nvim_buf_get_lines, buf, chunk_start - 1, current, false)
     if not ok or #lines == 0 then
       break
@@ -102,20 +103,21 @@ end
 ---@param buf integer Buffer handle
 ---@param start_row integer Starting line row (1-indexed)
 ---@param line_count integer Total line count in buffer
+---@param max_depth integer|nil Maximum lines to search downward
 ---@return string|nil text Line text
 ---@return string|nil lead Leading whitespace string
 ---@return integer|nil row Line row index (1-indexed)
-function M.find_non_blank_down(buf, start_row, line_count)
+function M.find_non_blank_down(buf, start_row, line_count, max_depth)
   if not buf or not api.nvim_buf_is_valid(buf) or start_row > line_count then
     return nil
   end
 
-  local max_depth = 2000
-  local current = start_row
+  max_depth = max_depth or 1000
   local max_allowed = math.min(line_count, start_row + max_depth)
+  local current = start_row
 
   while current <= max_allowed do
-    local chunk_end = math.min(max_allowed, current + 50 - 1)
+    local chunk_end = math.min(max_allowed, current + 64 - 1)
     local ok, lines = pcall(api.nvim_buf_get_lines, buf, current - 1, chunk_end, false)
     if not ok or #lines == 0 then
       break

@@ -1,14 +1,13 @@
 --- State management for indentinator.nvim.
---- Tracks per-buffer enablement states, window viewport ranges, and debounce timers.
+--- Tracks per-buffer enablement states, cache, rendered viewport ranges, and debounce timers.
 
 local M = {}
 
---- Internal state data tables.
 M.state = {
   enabled = {},
-  windows = {},
   cache = {},
   timers = {},
+  rendered = {},
 }
 
 --- Purges scope calculation cache for a buffer or all buffers.
@@ -28,8 +27,8 @@ function M.clear_buf_state(buf)
     return
   end
   M.state.enabled[buf] = nil
-  M.state.windows[buf] = nil
   M.state.cache[buf] = nil
+  M.state.rendered[buf] = nil
 end
 
 --- Stops and closes the debounce timer for a window.
@@ -50,9 +49,6 @@ function M.clear_win_state(win)
     return
   end
   M.clear_timer(win)
-  for _, ranges in pairs(M.state.windows) do
-    ranges[win] = nil
-  end
 end
 
 return M
