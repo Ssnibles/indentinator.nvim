@@ -411,4 +411,148 @@ print("  ✓ Treesitter keyword scope delimiters verified successfully without s
 pcall(vim.api.nvim_buf_delete, ts_kw_buf, { force = true })
 pcall(vim.api.nvim_buf_delete, buf, { force = true })
 
+-- 15. Test Hierarchical Multi-Level Scope Navigation
+print("[Test 15] Testing Hierarchical Multi-Level Scope Navigation...")
+local nest_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(nest_buf, 0, -1, false, {
+  "function outer_fn()",
+  "  if true then",
+  "    local x = 1",
+  "  end",
+  "end",
+})
+vim.api.nvim_set_option_value("filetype", "lua", { buf = nest_buf })
+vim.api.nvim_win_set_buf(win, nest_buf)
+
+-- Start on line 3 (local x = 1)
+vim.api.nvim_win_set_cursor(win, { 3, 4 })
+ind.jump_to_scope_start()
+local j1 = vim.api.nvim_win_get_cursor(win)
+assert_eq(j1[1], 2, "First jump_to_scope_start should land on line 2 (if true then)")
+
+-- Repeat jump from line 2 (should climb to parent scope line 1)
+ind.jump_to_scope_start()
+local j2 = vim.api.nvim_win_get_cursor(win)
+assert_eq(j2[1], 1, "Second jump_to_scope_start should climb to parent scope line 1 (outer_fn)")
+
+-- Repeat jump downward
+vim.api.nvim_win_set_cursor(win, { 3, 4 })
+ind.jump_to_scope_end()
+local je1 = vim.api.nvim_win_get_cursor(win)
+assert_eq(je1[1], 4, "First jump_to_scope_end should land on line 4 (end of if)")
+
+-- Repeat jump from line 4 (should climb to parent scope line 5)
+ind.jump_to_scope_end()
+local je2 = vim.api.nvim_win_get_cursor(win)
+assert_eq(je2[1], 5, "Second jump_to_scope_end should climb to parent scope line 5 (end of outer_fn)")
+
+pcall(vim.api.nvim_buf_delete, nest_buf, { force = true })
+print("  ✓ Hierarchical multi-level scope navigation verified successfully.")
+
+-- 16. Test Visual Mode Safety for select_scope
+print("[Test 16] Testing Visual Mode Safety for select_scope...")
+local vis_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(vis_buf, 0, -1, false, {
+  "function vis_test()",
+  "  if true then",
+  "    local val = 123",
+  "  end",
+  "end",
+})
+vim.api.nvim_set_option_value("filetype", "lua", { buf = vis_buf })
+vim.api.nvim_win_set_buf(win, vis_buf)
+vim.api.nvim_win_set_cursor(win, { 3, 4 })
+
+-- Enter visual line mode manually before calling select_scope
+vim.cmd("normal! V")
+local mode_before = vim.api.nvim_get_mode().mode
+assert_eq(mode_before, "V", "Should be in Visual Line mode")
+ind.select_scope(true)
+local mode_after = vim.api.nvim_get_mode().mode
+assert_eq(mode_after, "V", "select_scope must preserve Visual Line mode without toggling it off")
+
+pcall(vim.api.nvim_buf_delete, vis_buf, { force = true })
+print("  ✓ Visual mode safety for select_scope verified successfully.")
+
+-- 17. Test Comment and String Bypassing in Treesitter Scope
+print("[Test 17] Testing Comment & String Bypassing in Treesitter Scope...")
+local cmt_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(cmt_buf, 0, -1, false, {
+  "function comment_scope()",
+  "  -- Multi-line comment header",
+  "  -- Second comment line",
+  "  return 42",
+  "end",
+})
+vim.api.nvim_set_option_value("filetype", "lua", { buf = cmt_buf })
+vim.api.nvim_win_set_buf(win, cmt_buf)
+
+-- Cursor on line 2 (comment)
+vim.api.nvim_win_set_cursor(win, { 2, 5 })
+local cmt_scope = ind.get_current_scope(cmt_buf, win)
+assert_eq(cmt_scope ~= nil, true, "Scope should be detected from comment line")
+assert_eq(cmt_scope.scope_start, 1, "Cursor in comment should resolve to enclosing function scope start (line 1)")
+assert_eq(cmt_scope.scope_end, 5, "Cursor in comment should resolve to enclosing function scope end (line 5)")
+
+pcall(vim.api.nvim_buf_delete, cmt_buf, { force = true })
+print("  ✓ Comment and string bypassing in Treesitter scope verified successfully.")
+
+-- 18. Test Indentation-based Scope Fallback Delimiter Accuracy
+print("[Test 18] Testing Indentation-based Scope Fallback Delimiter Accuracy...")
+local py_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(py_buf, 0, -1, false, {
+  "def py_test():",
+  "    if True:",
+  "        x = 1",
+  "        y = 2",
+  "    subsequent_statement = True",
+})
+vim.api.nvim_set_option_value("shiftwidth", 4, { buf = py_buf })
+vim.api.nvim_set_option_value("tabstop", 4, { buf = py_buf })
+vim.api.nvim_win_set_buf(win, py_buf)
+vim.api.nvim_win_set_cursor(win, { 3, 8 })
+
+ind.setup({ scope = { treesitter = false } })
+local py_scope = ind.get_current_scope(py_buf, win)
+assert_eq(py_scope.scope_start, 2, "Python if block should start at line 2")
+assert_eq(
+  py_scope.scope_end,
+  4,
+  "Python if block should end at line 4 (must not swallow subsequent non-closing statement on line 5)"
+)
+
+-- Restore treesitter config
+ind.setup({ scope = { treesitter = true } })
+pcall(vim.api.nvim_buf_delete, py_buf, { force = true })
+print("  ✓ Indentation fallback closing delimiter accuracy verified successfully.")
+
+-- 19. Test Viewport Scrolling Ghost Mark Elimination
+print("[Test 19] Testing Viewport Scrolling Ghost Mark Elimination...")
+local scroll_clean_buf = vim.api.nvim_create_buf(false, true)
+local long_lines = {}
+for i = 1, 100 do
+  long_lines[i] = "    local item = " .. i
+end
+vim.api.nvim_buf_set_lines(scroll_clean_buf, 0, -1, false, long_lines)
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = scroll_clean_buf })
+vim.api.nvim_win_set_buf(win, scroll_clean_buf)
+ind.enable(scroll_clean_buf)
+
+-- Render viewport near top
+vim.cmd("normal! 1G")
+vim.cmd("redraw")
+render.render(scroll_clean_buf, win)
+local marks_top_before = vim.api.nvim_buf_get_extmarks(scroll_clean_buf, render.NS, { 0, 0 }, { 9, -1 }, {})
+assert_eq(#marks_top_before > 0, true, "Lines 1..10 should have extmarks initially")
+
+-- Scroll down so lines 1..10 are out of view
+vim.cmd("normal! 60G")
+vim.cmd("redraw")
+render.render(scroll_clean_buf, win)
+local marks_top_after = vim.api.nvim_buf_get_extmarks(scroll_clean_buf, render.NS, { 0, 0 }, { 9, -1 }, {})
+assert_eq(#marks_top_after, 0, "Lines 1..10 must have zero extmarks after scrolling past them")
+
+pcall(vim.api.nvim_buf_delete, scroll_clean_buf, { force = true })
+print("  ✓ Viewport scrolling ghost mark elimination verified successfully.")
+
 print("=== All Indentinator Tests Passed Successfully! ===")
