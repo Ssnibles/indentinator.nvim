@@ -1,5 +1,6 @@
 --- Health check diagnostic module for indentinator.nvim.
-
+--- Verifies Neovim 0.10+ environment, decoration provider, Treesitter query support, and configuration.
+---@class indentinator.health
 local M = {}
 
 --- Performs health check diagnostics.
@@ -8,9 +9,9 @@ function M.check()
 
   local v = vim.version()
   if v and (v.major > 0 or v.minor >= 10) then
-    vim.health.ok(("Neovim %s supported"):format(vim.fn.string(v)))
+    vim.health.ok(("Neovim %s supported (0.10+ decoration provider & extmarks active)"):format(vim.fn.string(v)))
   else
-    vim.health.error("Neovim 0.10+ recommended for extmark scope features")
+    vim.health.error("Neovim 0.10+ required for decoration provider & ephemeral extmark pipeline")
   end
 
   local ind = require("indentinator")
@@ -18,7 +19,6 @@ function M.check()
   local ind_cfg = c.indent or {}
   local scope_cfg = c.scope or {}
   local rainbow_cfg = ind_cfg.rainbow or {}
-
   local delim_cfg = c.delimiters or {}
 
   vim.health.info(("enabled=%s debounce_ms=%d max_file_lines=%s priority=%s"):format(
@@ -46,7 +46,7 @@ function M.check()
 
   if scope_cfg.treesitter then
     if vim.treesitter and vim.treesitter.get_parser then
-      vim.health.ok("Treesitter is available for active scope calculation")
+      vim.health.ok("Treesitter is available for active scope AST query calculation")
     else
       vim.health.warn("scope.treesitter option is enabled but vim.treesitter is not available")
     end
