@@ -13,14 +13,14 @@ A lightweight, high-performance indentation and scope guides plugin for Neovim. 
 - **Fine-Grained Blank Line Policies**: Configurable toggles (`indent.show_empty`, `scope.show_empty`) for blank line rendering.
 - **Rainbow Indent Guides**: Optional level-by-level rainbow coloring for standard indentation guides.
 - **Smart Debouncing**: Configurable micro-debounced rendering (`debounce_ms`) for high-frequency cursor movements (`CursorMoved`, `WinScrolled`).
-- **Treesitter Integration (Default)**: Optional, enabled-by-default Treesitter AST scope resolution (`scope.treesitter = true`) with seamless fallback to indentation calculations.
+- **Treesitter Integration (Default)**: Optional, enabled-by-default Treesitter AST scope resolution (`scope.treesitter = true`) with seamless fallback to indentation calculations. Scope node types are data-driven per language (`scope.include` / `scope.exclude` / `scope.languages`) and resolution follows injected languages (e.g. a Lua fence inside Markdown).
 - **Viewport-Bounded**: Only computes and paints guides for lines visible in the active window.
 
 ---
 
 ## Requirements
 
-- Neovim 0.10+ (for modern extmark overlay support).
+- Neovim 0.10+ (uses the modern extmark API and `vim.iter`).
 
 ---
 
@@ -109,6 +109,8 @@ Default configuration settings:
 require("indentinator").setup({
   enabled = true,        -- Enable plugin globally
   debounce_ms = 10,      -- Micro-debounce delay in ms for autocommand re-renders
+  max_file_lines = 10000,-- Disable guides above this line count
+  viewport_buffer = 30,  -- Extra lines rendered above/below the viewport (reduces scroll flicker)
   priority = 100,        -- Extmark priority level
 
   -- Standard indentation guides across all levels
@@ -154,6 +156,15 @@ require("indentinator").setup({
     hl = "IndentinatorScope",   -- Highlight group for active scope guide
     hl_header = nil,            -- Optional highlight group for scope header line
     treesitter = true,          -- Use Treesitter for scope calculation
+
+    -- Language-aware scope node types. Built-in allow-lists cover common
+    -- languages (lua, python, js/ts, c/cpp, go, rust, ruby, bash, java);
+    -- unlisted languages fall back to a generic AST heuristic.
+    include = {},               -- Node types always treated as scopes (all languages)
+    exclude = {},               -- Node types never treated as scopes (all languages)
+    languages = {               -- Per-language overrides
+      -- lua = { include = { "table_constructor" }, exclude = { "do_statement" } },
+    },
   },
 
   exclude = {
@@ -167,6 +178,85 @@ require("indentinator").setup({
   },
 })
 ```
+
+---
+
+## Per-buffer configuration
+
+Overrides can be applied to individual buffers. They take precedence over the
+global configuration and are cleared automatically when the buffer is deleted.
+
+```lua
+local ind = require("indentinator")
+
+-- Disable the active scope guide (but keep indent guides) in one buffer
+ind.set_buffer_config({ scope = { enabled = false } }, bufnr)
+
+-- Read the effective configuration for a buffer
+local cfg = ind.get_config(bufnr)
+
+-- Merge new options into the global config without resetting other values
+ind.update({ viewport_buffer = 0 })
+```
+
+> `setup()` resets the global configuration to defaults before applying its
+> options, while `update()` merges into the current values.
+
+Precedence rules:
+
+- `enable()` / `disable()` (and an explicit per-buffer `enabled` override) win
+  over the global `enabled` switch **and** over filetype/buftype exclusions.
+- For scope node types, `scope.include` wins over `scope.exclude`, which wins
+  over the built-in per-language allow-list, which wins over the generic
+  heuristic used for unlisted languages.
+
+---
+
+## Hooks
+
+Register callbacks to influence rendering without forking the plugin. All
+callbacks are wrapped in `pcall`, so a failing hook never breaks rendering.
+
+```lua
+local ind = require("indentinator")
+
+-- Skip rendering in a particular buffer
+ind.register_hook(ind.hook_types.ACTIVE, function(buf)
+  return vim.b[buf].no_indent_guides ~= true
+end)
+
+-- Never draw the active scope guide (keep indent guides)
+ind.register_hook(ind.hook_types.SCOPE_ACTIVE, function()
+  return true
+end)
+
+-- Skip painting specific lines (e.g. diff filler)
+ind.register_hook(ind.hook_types.SKIP_LINE, function(_, row, line)
+  return line:match("^%s*$") ~= nil
+end)
+
+ind.clear_hooks() -- remove all hooks (or pass a hook type)
+```
+
+| Hook | Signature | Effect |
+|------|-----------|--------|
+| `ACTIVE` | `fn(buf) -> boolean` | Return `false` to skip the buffer entirely |
+| `SCOPE_ACTIVE` | `fn(buf) -> boolean` | Return `false` to hide the active scope guide |
+| `SKIP_LINE` | `fn(buf, row, line) -> boolean` | Return `true` to skip painting a line |
+
+---
+
+## Development
+
+```sh
+make test       # run all headless test suites
+make luacheck   # static analysis
+make stylua     # formatting check
+make check      # all of the above
+```
+
+Tests live in `tests/` and run against any Neovim 0.10+ build
+(`tests/run.sh` auto-discovers `tests/test_*.lua`).
 
 ---
 
