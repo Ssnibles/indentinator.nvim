@@ -1,5 +1,6 @@
 --- Configuration module for indentinator.nvim.
---- Handles user options merging, corner presets, Luadoc typing, and buffer enablement checks.
+--- Handles user options merging, corner presets, per-buffer overrides,
+--- Luadoc typing, and buffer enablement checks.
 ---@class indentinator.config
 local M = {}
 
@@ -16,6 +17,10 @@ local api = vim.api
 ---@field hl string Highlight group name for passive indent guides
 ---@field rainbow indentinator.RainbowConfig Rainbow indent configuration
 
+---@class indentinator.LanguageNodeOverride
+---@field include string[]|nil Extra node types treated as scopes for this language
+---@field exclude string[]|nil Node types never treated as scopes for this language
+
 ---@class indentinator.ScopeConfig
 ---@field enabled boolean Whether active scope indicator is enabled
 ---@field show_empty boolean Whether to render scope guide on empty/whitespace lines
@@ -28,6 +33,9 @@ local api = vim.api
 ---@field hl string Highlight group name for active scope guide
 ---@field hl_header string|nil Optional highlight group for scope header line
 ---@field treesitter boolean Whether to use Treesitter AST for active scope calculation
+---@field include string[] Node types always treated as scopes (all languages)
+---@field exclude string[] Node types never treated as scopes (all languages)
+---@field languages table<string, indentinator.LanguageNodeOverride> Per-language node overrides
 
 ---@class indentinator.DelimitersConfig
 ---@field enabled boolean Whether to highlight scope boundary delimiters
@@ -46,6 +54,7 @@ local api = vim.api
 ---@field enabled boolean Global enablement switch
 ---@field debounce_ms integer Debounce delay in milliseconds for cursor events
 ---@field max_file_lines integer Maximum line count before guides are gracefully disabled
+---@field viewport_buffer integer Extra lines rendered above/below the viewport
 ---@field priority integer Base extmark priority
 ---@field indent indentinator.IndentConfig Passive indent guides options
 ---@field scope indentinator.ScopeConfig Active scope guide options
@@ -66,6 +75,7 @@ M.defaults = {
   enabled = true,
   debounce_ms = 10,
   max_file_lines = 10000,
+  viewport_buffer = 30,
   indent = {
     enabled = true,
     show_empty = true,
@@ -104,6 +114,9 @@ M.defaults = {
     hl = "IndentinatorScope",
     hl_header = nil,
     treesitter = true,
+    include = {},
+    exclude = {},
+    languages = {},
   },
   priority = 100,
   exclude = {
@@ -116,111 +129,255 @@ M.defaults = {
 ---@type indentinator.Config
 M.values = vim.deepcopy(M.defaults)
 
---- Fast lookup sets for excluded buftypes and filetypes.
-local exclude_buftypes_set = {}
-local exclude_filetypes_set = {}
+--- Per-buffer configuration overrides.
+---@type table<integer, table>
+M.buffer_values = {}
 
---- Rebuilds exclude lookup sets using vim.iter.
-local function rebuild_exclude_sets()
-  exclude_buftypes_set = {}
-  exclude_filetypes_set = {}
-  if M.values.exclude then
-    if M.values.exclude.buftypes then
-      vim.iter(M.values.exclude.buftypes):each(function(bt)
-        exclude_buftypes_set[bt] = true
-      end)
-    end
-    if M.values.exclude.filetypes then
-      vim.iter(M.values.exclude.filetypes):each(function(ft)
-        exclude_filetypes_set[ft] = true
-      end)
+--- Resolved (merged + finalised) per-buffer configurations.
+---@type table<integer, indentinator.Config>
+M._resolved = {}
+
+--- Converts a list into a lookup set.
+---@param list string[]|nil
+---@return table<string, boolean>
+local function to_set(list)
+  local set = {}
+  if type(list) == "table" then
+    for _, item in ipairs(list) do
+      set[item] = true
     end
   end
+  return set
 end
-rebuild_exclude_sets()
 
---- Merges user options into configuration values.
+--- Coerces numeric fields and builds all derived lookup sets on a config table.
+---@param cfg indentinator.Config
+---@return indentinator.Config
+local function finalize(cfg)
+  if type(cfg.debounce_ms) ~= "number" or cfg.debounce_ms < 0 then
+    cfg.debounce_ms = M.defaults.debounce_ms
+  end
+  if type(cfg.max_file_lines) ~= "number" or cfg.max_file_lines <= 0 then
+    cfg.max_file_lines = M.defaults.max_file_lines
+  end
+  if type(cfg.viewport_buffer) ~= "number" or cfg.viewport_buffer < 0 then
+    cfg.viewport_buffer = M.defaults.viewport_buffer
+  end
+  if type(cfg.priority) ~= "number" then
+    cfg.priority = M.defaults.priority
+  end
+
+  cfg.exclude = cfg.exclude or {}
+  cfg.exclude.filetypes = cfg.exclude.filetypes or {}
+  cfg.exclude.buftypes = cfg.exclude.buftypes or {}
+  cfg._exclude_filetypes_set = to_set(cfg.exclude.filetypes)
+  cfg._exclude_buftypes_set = to_set(cfg.exclude.buftypes)
+
+  cfg.scope = cfg.scope or {}
+  cfg.scope.include = cfg.scope.include or {}
+  cfg.scope.exclude = cfg.scope.exclude or {}
+  cfg.scope.languages = cfg.scope.languages or {}
+  cfg._scope_include_set = to_set(cfg.scope.include)
+  cfg._scope_exclude_set = to_set(cfg.scope.exclude)
+  for _, override in pairs(cfg.scope.languages) do
+    if type(override) == "table" then
+      override._include_set = to_set(override.include)
+      override._exclude_set = to_set(override.exclude)
+    end
+  end
+
+  return cfg
+end
+
+finalize(M.values)
+
+--- Normalises a user options table (boolean shorthands + corner presets).
+---@param opts table|nil
+---@return table
+local function normalise(opts)
+  local n = vim.deepcopy(opts) or {}
+  if type(n.indent) == "boolean" then
+    n.indent = { enabled = n.indent }
+  end
+  if type(n.scope) == "boolean" then
+    n.scope = { enabled = n.scope }
+  end
+  if type(n.delimiters) == "boolean" then
+    n.delimiters = { enabled = n.delimiters }
+  end
+
+  -- Apply corner preset if specified and characters were not explicitly provided.
+  local scope_opt = type(n.scope) == "table" and n.scope or nil
+  if scope_opt and scope_opt.corner_style and M.CORNER_PRESETS[scope_opt.corner_style] then
+    local preset = M.CORNER_PRESETS[scope_opt.corner_style]
+    if scope_opt.char_top == nil then
+      scope_opt.char_top = preset.char_top
+    end
+    if scope_opt.char_bottom == nil then
+      scope_opt.char_bottom = preset.char_bottom
+    end
+  end
+
+  return n
+end
+
+--- Applies the flat convenience options onto a config table.
+---@param cfg indentinator.Config
+---@param opts table
+local function apply_flat(cfg, opts)
+  if opts.char then
+    cfg.indent.char = opts.char
+    cfg.scope.char = opts.char
+  end
+  if opts.hl then
+    cfg.scope.hl = opts.hl
+  end
+  if opts.treesitter ~= nil then
+    cfg.scope.treesitter = opts.treesitter
+  end
+  if opts.scope_rainbow ~= nil then
+    cfg.scope.rainbow = opts.scope_rainbow
+  end
+  if opts.rainbow_delimiters ~= nil then
+    cfg.delimiters.rainbow = opts.rainbow_delimiters
+  end
+  if type(opts.scope) == "table" and opts.scope.rainbow_delimiters ~= nil then
+    cfg.delimiters.rainbow = opts.scope.rainbow_delimiters
+  end
+end
+
+--- Merges user options into global configuration values.
+--- Resets the global config to defaults first, so it is safe to call repeatedly.
 ---@param opts indentinator.Config|table|nil User configuration options
 function M.setup(opts)
   if type(opts) ~= "table" then
     return
   end
 
-  -- Handle boolean shorthand configs before deep merge
-  local normalised = vim.deepcopy(opts)
-  if type(normalised.indent) == "boolean" then
-    normalised.indent = { enabled = normalised.indent }
-  end
-  if type(normalised.scope) == "boolean" then
-    normalised.scope = { enabled = normalised.scope }
-  end
-  if type(normalised.delimiters) == "boolean" then
-    normalised.delimiters = { enabled = normalised.delimiters }
+  -- Deep merge onto a fresh copy of defaults so that repeated setup() calls
+  -- cannot leak stale overrides into later calls.
+  M.values = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), normalise(opts))
+  apply_flat(M.values, opts)
+
+  finalize(M.values)
+  M._resolved = {}
+end
+
+--- Updates global configuration by merging into the current values (no reset).
+---@param opts indentinator.Config|table|nil User configuration options
+function M.update(opts)
+  if type(opts) ~= "table" then
+    return
   end
 
-  -- Deep merge normalised options
-  M.values = vim.tbl_deep_extend("force", M.values, normalised)
+  M.values = vim.tbl_deep_extend("force", M.values, normalise(opts))
+  apply_flat(M.values, opts)
 
-  -- Flat options support for user convenience
-  if opts.char then
-    M.values.indent.char = opts.char
-    M.values.scope.char = opts.char
-  end
-  if opts.hl then
-    M.values.scope.hl = opts.hl
-  end
-  if opts.treesitter ~= nil then
-    M.values.scope.treesitter = opts.treesitter
-  end
-  if opts.scope_rainbow ~= nil then
-    M.values.scope.rainbow = opts.scope_rainbow
-  end
-  if opts.rainbow_delimiters ~= nil then
-    M.values.delimiters.rainbow = opts.rainbow_delimiters
-  end
-  if type(opts.scope) == "table" and opts.scope.rainbow_delimiters ~= nil then
-    M.values.delimiters.rainbow = opts.scope.rainbow_delimiters
+  finalize(M.values)
+  M._resolved = {}
+end
+
+--- Retrieves the resolved configuration for a buffer, falling back to the global
+--- configuration when the buffer has no overrides. Results are memoized.
+---@param buf integer|nil Buffer handle
+---@return indentinator.Config
+function M.get(buf)
+  if not buf then
+    return M.values
   end
 
-  -- Apply corner preset if specified and characters were not explicitly provided
-  local scope_opt = type(opts.scope) == "table" and opts.scope or nil
-  if scope_opt and scope_opt.corner_style and M.CORNER_PRESETS[scope_opt.corner_style] then
-    local preset = M.CORNER_PRESETS[scope_opt.corner_style]
-    if scope_opt.char_top == nil then
-      M.values.scope.char_top = preset.char_top
-    end
-    if scope_opt.char_bottom == nil then
-      M.values.scope.char_bottom = preset.char_bottom
-    end
+  local resolved = M._resolved[buf]
+  if resolved then
+    return resolved
   end
 
-  rebuild_exclude_sets()
+  local override = M.buffer_values[buf]
+  if not override then
+    M._resolved[buf] = M.values
+    return M.values
+  end
+
+  local merged = vim.tbl_deep_extend("force", vim.deepcopy(M.values), normalise(override))
+  finalize(merged)
+  M._resolved[buf] = merged
+  return merged
+end
+
+--- Sets per-buffer configuration overrides (same shape as `setup`).
+--- Replaces any existing override for the buffer.
+---@param buf integer Buffer handle
+---@param opts table|nil Overrides; nil clears them
+function M.set_buffer(buf, opts)
+  if not buf or not api.nvim_buf_is_valid(buf) then
+    return
+  end
+  if opts == nil then
+    M.buffer_values[buf] = nil
+  else
+    M.buffer_values[buf] = vim.deepcopy(opts)
+  end
+  M._resolved[buf] = nil
+end
+
+--- Merges additional overrides into a buffer's existing override.
+---@param buf integer Buffer handle
+---@param opts table Overrides to merge
+function M.update_buffer(buf, opts)
+  if not buf or not api.nvim_buf_is_valid(buf) or type(opts) ~= "table" then
+    return
+  end
+  local current = M.buffer_values[buf] or {}
+  M.buffer_values[buf] = vim.tbl_deep_extend("force", vim.deepcopy(current), vim.deepcopy(opts))
+  M._resolved[buf] = nil
+end
+
+--- Clears cached per-buffer configuration for a buffer.
+---@param buf integer Buffer handle
+function M.clear_buffer(buf)
+  M.buffer_values[buf] = nil
+  M._resolved[buf] = nil
+end
+
+--- Returns the explicit per-buffer `enabled` override, if any.
+---@param buf integer Buffer handle
+---@return boolean|nil
+function M.get_enabled_override(buf)
+  local override = M.buffer_values[buf]
+  if type(override) == "table" and type(override.enabled) == "boolean" then
+    return override.enabled
+  end
+  return nil
 end
 
 --- Checks if plugin features are enabled for a given buffer.
+---
+--- Precedence: an explicit per-buffer `enabled` override (set via the public
+--- `enable`/`disable` API or `set_buffer_config`) wins over both the global
+--- `enabled` switch and the filetype/buftype exclusions.
 ---@param buf integer Buffer handle
----@param state_enabled boolean|nil Buffer-specific explicit enablement override
 ---@return boolean True if guides should run for this buffer
-function M.is_enabled(buf, state_enabled)
+function M.is_enabled(buf)
   if not buf or not api.nvim_buf_is_valid(buf) then
     return false
   end
 
-  if state_enabled ~= nil then
-    return state_enabled
+  local override = M.get_enabled_override(buf)
+  if override ~= nil then
+    return override
   end
 
-  if not M.values.enabled then
+  local cfg = M.get(buf)
+  if not cfg.enabled then
     return false
   end
 
   local ok_bt, bt = pcall(api.nvim_get_option_value, "buftype", { buf = buf })
-  if ok_bt and type(bt) == "string" and bt ~= "" and exclude_buftypes_set[bt] then
+  if ok_bt and type(bt) == "string" and bt ~= "" and cfg._exclude_buftypes_set[bt] then
     return false
   end
 
   local ok_ft, ft = pcall(api.nvim_get_option_value, "filetype", { buf = buf })
-  if ok_ft and type(ft) == "string" and ft ~= "" and exclude_filetypes_set[ft] then
+  if ok_ft and type(ft) == "string" and ft ~= "" and cfg._exclude_filetypes_set[ft] then
     return false
   end
 
