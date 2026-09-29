@@ -1,102 +1,42 @@
 --- Treesitter AST query engine and scope resolution module for indentinator.nvim.
---- Uses native Neovim 0.10+ treesitter APIs, range-limited queries, and intelligent indentation fallback.
+--- Uses native Neovim 0.10+ treesitter APIs, data-driven per-language scope
+--- allow-lists, range-limited queries, and intelligent indentation fallback.
 ---@class indentinator.treesitter
 local M = {}
 
 local utils = require("indentinator.utils")
 local cache = require("indentinator.cache")
+local config = require("indentinator.config")
+local sl = require("indentinator.scope_languages")
 
 local api = vim.api
 local byte = string.byte
 
---- Root AST node types that represent full document root level across languages
-local ROOT_AST_TYPES = {
-  translation_unit = true,
-  program = true,
-  source_file = true,
-  chunk = true,
-  module = true,
-  script = true,
-  document = true,
-  compilation_unit = true,
-  file = true,
-  root = true,
-}
-
---- Block/body container types that should promote to their parent construct
-local BLOCK_TYPES = {
-  block = true,
-  statement_block = true,
-  compound_statement = true,
-  body = true,
-  statement_list = true,
-  consequence = true,
-  alternative = true,
-  declaration_list = true,
-  field_declaration_list = true,
-  class_body = true,
-  switch_body = true,
-  switch_block = true,
-}
-
---- Expression and non-compound AST node types that should never be treated as scopes
-local EXCLUDED_NODE_TYPES = {
-  -- Function / method calls and arguments
-  arguments = true,
-  argument_list = true,
-  parameters = true,
-  parameter_list = true,
-  formal_parameters = true,
-  call_expression = true,
-  function_call = true,
-  method_call = true,
-
-  -- Variable declarations, definitions & assignments
-  assignment_statement = true,
-  variable_declaration = true,
-  local_variable_declaration = true,
-  lexical_declaration = true,
-  declaration = true,
-  expression_statement = true,
-  short_var_decl = true,
-  assignment = true,
-  augmented_assignment = true,
-
-  -- Control flow jump statements
-  return_statement = true,
-  break_statement = true,
-  continue_statement = true,
-  yield_statement = true,
-  throw_statement = true,
-  goto_statement = true,
-
-  -- Expressions & sub-expressions
-  expression_list = true,
-  variable_list = true,
-  binary_expression = true,
-  unary_expression = true,
-  boolean_expression = true,
-  comparison_expression = true,
-  concatenation = true,
-  parenthesized_expression = true,
-  subscript_expression = true,
-  member_expression = true,
-  dot_index_expression = true,
-  bracket_index_expression = true,
-  conditional_expression = true,
-  ternary_expression = true,
-  type_annotation = true,
-  type_specifier = true,
-  type_arguments = true,
-  type_parameters = true,
-
-  -- Data structure entries (container object/table IS a scope, but not individual field/pair)
-  field = true,
-  pair = true,
-  property_assignment = true,
-  shorthand_property_identifier = true,
-  spread_element = true,
-}
+--- Finds the (possibly injected) language tree that contains a 0-indexed range.
+--- Falls back to the given root tree when no injection matches.
+---@param lang_tree vim.treesitter.LanguageTree
+---@param s_row integer 0-indexed start row
+---@param s_col integer 0-indexed start col
+---@param e_row integer 0-indexed end row
+---@param e_col integer 0-indexed end col
+---@return vim.treesitter.LanguageTree
+local function language_for_range(lang_tree, s_row, s_col, e_row, e_col)
+  local range = { s_row, s_col, e_row, e_col }
+  local ok_children, children = pcall(function()
+    return lang_tree:children()
+  end)
+  if ok_children and children then
+    for _, child in pairs(children) do
+      local ok_contains, contains = pcall(function()
+        return child:contains(range)
+      end)
+      if ok_contains and contains then
+        return language_for_range(child, s_row, s_col, e_row, e_col)
+      end
+    end
+  end
+  return lang_tree
+end
 
 --- Byte lookup table for ASCII delimiter characters: {}()[]
 local DELIM_BYTES = {}
@@ -152,7 +92,8 @@ local KEYWORD_SET = {
 }
 
 --- Closing delimiter patterns for indentation-based language scope boundaries
-local CLOSING_DELIM_PATTERN = "^%s*([%}%)%]%w]+)"
+local CLOSING_DELIM_PATTERN = "^%s*([%}%)%]])"
+local CLOSING_DELIM_WORD_PATTERN = "^%s*(%w+)"
 local CLOSING_DELIM_WORDS = {
   ["}"] = true,
   [")"] = true,
@@ -174,7 +115,7 @@ local CLOSING_DELIM_WORDS = {
 ---@param text string
 ---@return boolean
 local function is_closing_delimiter(text)
-  local m = text:match(CLOSING_DELIM_PATTERN)
+  local m = text:match(CLOSING_DELIM_PATTERN) or text:match(CLOSING_DELIM_WORD_PATTERN)
   if not m then
     return false
   end
@@ -220,44 +161,59 @@ function M.get_parser(buf)
   return nil
 end
 
---- Checks whether an AST node is a valid compound structural scope
---- and rejects expression, literal, comment, and identifier nodes.
----@param node userdata|nil TSNode
+--- True for comment/string node types, which never form scopes.
+---@param t string Node type
 ---@return boolean
-local function is_valid_scope_node(node)
+local function is_trivia_type(t)
+  return t:find("comment") ~= nil or t:find("string") ~= nil
+end
+
+--- Checks whether an AST node is a valid compound structural scope.
+--- Uses a per-language allow-list when available, otherwise a generic heuristic.
+--- User-provided include/exclude node types always take precedence.
+---@param node userdata|nil TSNode
+---@param lang string|nil Treesitter language name
+---@param cfg indentinator.Config|nil Resolved configuration
+---@return boolean
+local function is_valid_scope_node(node, lang, cfg)
   if not node then
     return false
   end
   local t = node:type()
-  if ROOT_AST_TYPES[t] or EXCLUDED_NODE_TYPES[t] then
+  if sl.is_root(t) or sl.is_block(t) then
     return false
   end
-  if t:find("comment") or t:find("string") or t:find("^identifier") or t:find("_identifier") or t:find("literal") then
+
+  local scope_cfg = (cfg and cfg.scope) or {}
+  local lang_override = scope_cfg.languages and lang and scope_cfg.languages[lang] or nil
+  local include_set = cfg and cfg._scope_include_set
+  local exclude_set = cfg and cfg._scope_exclude_set
+  if include_set and include_set[t] then
+    return true
+  end
+  if lang_override and lang_override._include_set and lang_override._include_set[t] then
+    return true
+  end
+  if exclude_set and exclude_set[t] then
+    return false
+  end
+  if lang_override and lang_override._exclude_set and lang_override._exclude_set[t] then
+    return false
+  end
+
+  local allow = sl.get(lang)
+  if allow then
+    return allow[t] == true
+  end
+
+  -- Generic heuristic fallback for languages without an allow-list.
+  if sl.excluded_types[t] or is_trivia_type(t) then
+    return false
+  end
+  if t:find("^identifier") or t:find("_identifier") or t:find("literal") then
     return false
   end
   return true
-end
-
---- Checks if a node type represents a conditional or exception branch clause.
----@param t string
----@return boolean
-local function is_clause_type(t)
-  return t == "except_clause"
-    or t == "finally_clause"
-    or t == "catch_clause"
-    or t == "elif_clause"
-    or t == "else_clause"
-    or t == "elseif_statement"
-    or t == "else_statement"
-    or t == "case_clause"
-    or t == "switch_case"
-    or t == "match_arm"
-    or t == "match_clause"
-    or t == "elsif"
-    or t == "else"
-    or t:find("^elif") ~= nil
-    or t:find("^elseif") ~= nil
-    or t:find("^else_") ~= nil
 end
 
 --- Partitions multi-branch constructs (if / elseif / else, try / except / finally, match / case)
@@ -272,19 +228,18 @@ local function get_branch_range(scope_node, row)
   local t = scope_node:type()
   local s_row, s_col, e_row, e_col = scope_node:range()
 
-  -- Parent construct with clauses (if, try, match, switch)
-  if t == "if_statement" or t == "if_expression" or t == "try_statement" or t == "switch_statement" or t == "match_statement" then
+  if sl.is_branch_parent(t) then
     for i = 0, scope_node:child_count() - 1 do
       local child = scope_node:child(i)
       local ct = child:type()
-      if is_clause_type(ct) then
+      if sl.is_clause(ct) then
         local cs_r, cs_c = child:range()
         if row < cs_r then
           return s_row, s_col, cs_r, cs_c
         end
       end
     end
-  elseif is_clause_type(t) then
+  elseif sl.is_clause(t) then
     local parent = scope_node:parent()
     if parent then
       local found_self = false
@@ -294,42 +249,28 @@ local function get_branch_range(scope_node, row)
           found_self = true
         elseif found_self then
           local ct = child:type()
-          if is_clause_type(ct) or ct == "end" or ct == "fi" or ct == "done" or ct == "}" then
+          if sl.is_clause(ct) or sl.is_closing(ct) then
             local cs_r, cs_c = child:range()
             return s_row, s_col, cs_r, cs_c
           end
         end
       end
-      -- Fallback to parent end range
-      local _, _, pe_r, pe_c = parent:range()
-      return s_row, s_col, pe_r, pe_c
+      -- No following clause or closing token found (e.g. a malformed tree):
+      -- stay within the clause's own range rather than swallowing the parent.
+      return s_row, s_col, e_row, e_col
     end
   end
 
   return s_row, s_col, e_row, e_col
 end
 
---- Promotes a body/block container node to its enclosing construct if appropriate.
----@param node userdata TSNode
----@return userdata TSNode
-local function promote_block_node(node)
-  if BLOCK_TYPES[node:type()] then
-    local parent = node:parent()
-    if parent and not ROOT_AST_TYPES[parent:type()] then
-      local p_s_row, _, p_e_row, _ = parent:range()
-      if p_s_row < p_e_row then
-        return parent
-      end
-    end
-  end
-  return node
-end
-
 --- Collects child scope ranges from a node for fast cursor containment tests.
 --- Uses node:iter_children() and scans block containers to detect nested scopes.
 ---@param node userdata TSNode
+---@param lang string|nil Treesitter language name
+---@param cfg indentinator.Config|nil Resolved configuration
 ---@return integer[][] child_ranges Array of { s_row, e_row }
-local function collect_child_scope_ranges(node)
+local function collect_child_scope_ranges(node, lang, cfg)
   local ranges = {}
   local s_row, _, e_row, _ = node:range()
 
@@ -337,18 +278,14 @@ local function collect_child_scope_ranges(node)
     for child in parent:iter_children() do
       if child:named() then
         local t = child:type()
-        if not (t:find("comment") or t:find("string")) then
-          if BLOCK_TYPES[t] then
+        if not is_trivia_type(t) then
+          if sl.is_block(t) then
             scan_children(child)
           else
             local cs_row, _, ce_row, _ = child:range()
-            if cs_row < ce_row and is_valid_scope_node(child) then
-              local promoted = promote_block_node(child)
-              if promoted ~= node and is_valid_scope_node(promoted) then
-                local ps_row, _, pe_row, _ = promoted:range()
-                if ps_row < pe_row and (ps_row > s_row or pe_row < e_row) and not ROOT_AST_TYPES[promoted:type()] then
-                  ranges[#ranges + 1] = { ps_row, pe_row }
-                end
+            if cs_row < ce_row and is_valid_scope_node(child, lang, cfg) then
+              if cs_row > s_row or ce_row < e_row then
+                ranges[#ranges + 1] = { cs_row, ce_row }
               end
             else
               -- Recurse into non-scope statements/expressions to find embedded scopes (e.g. callbacks)
@@ -375,16 +312,12 @@ local function is_comment_or_string(scope_node, line_idx, col)
   end
   local ok, desc = pcall(scope_node.descendant_for_range, scope_node, line_idx, col, line_idx, col + 1)
   if ok and desc then
-    local t = desc:type()
-    if t:find("comment") or t:find("string") then
+    if is_trivia_type(desc:type()) then
       return true
     end
     local parent = desc:parent()
-    if parent then
-      local pt = parent:type()
-      if pt:find("comment") or pt:find("string") then
-        return true
-      end
+    if parent and is_trivia_type(parent:type()) then
+      return true
     end
   end
   return false
@@ -397,8 +330,9 @@ end
 ---@param s_row integer 0-indexed start row
 ---@param e_row integer 0-indexed end row
 ---@param keywords_enabled boolean
+---@param lang_tree vim.treesitter.LanguageTree|nil Language tree for the scope (injection-aware)
 ---@return table[] delimiter_spans Array of { row, s_col, e_col }
-function M.get_boundary_delimiters(buf, scope_node, s_row, e_row, keywords_enabled)
+function M.get_boundary_delimiters(buf, scope_node, s_row, e_row, keywords_enabled, lang_tree)
   local spans = {}
   local boundary_rows = { s_row, e_row }
 
@@ -416,11 +350,15 @@ function M.get_boundary_delimiters(buf, scope_node, s_row, e_row, keywords_enabl
   end
 
   -- Attempt query-driven extraction using highlights query if available
-  local ok_p, parser = pcall(vim.treesitter.get_parser, buf)
+  local parser = lang_tree
+  if not parser then
+    local ok_p, root_parser = pcall(vim.treesitter.get_parser, buf)
+    parser = ok_p and root_parser or nil
+  end
   local query = nil
-  if ok_p and parser then
-    local lang = parser:lang()
-    query = vim.treesitter.query.get(lang, "highlights")
+  if parser then
+    local ok_q, q = pcall(vim.treesitter.query.get, parser:lang(), "highlights")
+    query = ok_q and q or nil
   end
 
   for _, row in ipairs(boundary_rows) do
@@ -451,7 +389,7 @@ function M.get_boundary_delimiters(buf, scope_node, s_row, e_row, keywords_enabl
             for id, q_node in query:iter_captures(root, buf, row, row + 1) do
               local cname = query.captures[id]
               if cname and cname:find("^keyword") then
-                local ns_row, ns_col, ne_row, ne_col = q_node:range()
+                local ns_row, ns_col, _, ne_col = q_node:range()
                 if ns_row == row and ns_col >= min_c and ne_col - 1 <= max_c then
                   local ok_t, txt = pcall(vim.treesitter.get_node_text, q_node, buf)
                   if ok_t and txt and (KEYWORD_SET[txt] or KEYWORD_SET[q_node:type()]) then
@@ -466,11 +404,17 @@ function M.get_boundary_delimiters(buf, scope_node, s_row, e_row, keywords_enabl
         else
           -- AST fallback for keywords
           local function collect_keywords(n)
-            if not n then return end
+            if not n then
+              return
+            end
             local nr_s, nc_s, nr_e, nc_e = n:range()
-            if nr_s > row or nr_e < row then return end
+            if nr_s > row or nr_e < row then
+              return
+            end
             local t_name = n:type()
-            if t_name:find("comment") or t_name:find("string") then return end
+            if is_trivia_type(t_name) then
+              return
+            end
 
             if nr_s == row and nr_e == row then
               local ok_t, txt = pcall(vim.treesitter.get_node_text, n, buf)
@@ -498,8 +442,9 @@ function M.get_boundary_delimiters(buf, scope_node, s_row, e_row, keywords_enabl
   return spans
 end
 
---- Efficiently finds the first and last inner scope body lines.
---- Performs short boundary scans instead of iterating entire scopes.
+--- Finds the first and last inner scope body lines (the lines that corners
+--- connect to). Fetches the scope body once and stops at the first matching
+--- line from each end, so cost is proportional to the leading/trailing gap.
 ---@param buf integer Buffer handle
 ---@param scope_start integer 1-indexed row
 ---@param scope_end integer 1-indexed row
@@ -512,44 +457,28 @@ function M.find_first_last_scope_lines(buf, scope_start, scope_end, active_col, 
     return nil, nil
   end
 
-  local function get_line_width(line_num)
-    local ok_l, fetched = pcall(api.nvim_buf_get_lines, buf, line_num - 1, line_num, false)
-    if not ok_l or not fetched or not fetched[1] then
-      return nil
-    end
-    local line_text = fetched[1]
-    local lead = line_text:match("^%s*") or ""
-    local is_blank = (line_text == "" or #lead == #line_text)
-    if is_blank then
-      return -1
-    end
-    return utils.lead_display_width(lead, tabstop)
+  -- 0-indexed [scope_start, scope_end) == 1-indexed body lines [scope_start+1, scope_end].
+  local ok, lines = pcall(api.nvim_buf_get_lines, buf, scope_start, scope_end, false)
+  if not ok or not lines or #lines == 0 then
+    return nil, nil
   end
 
-  -- Search downward from scope_start + 1 for first body line
-  local first_scope_line = nil
-  local scan_limit_down = math.min(scope_end, scope_start + 30)
-  for l = scope_start + 1, scan_limit_down do
-    local lw = get_line_width(l)
-    if lw and lw > active_col then
-      first_scope_line = l
+  local first_scope_line, last_scope_line
+  for i = 1, #lines do
+    local text = lines[i]
+    local lead = text:match("^%s*") or ""
+    if text ~= "" and #lead ~= #text and utils.lead_display_width(lead, tabstop) > active_col then
+      first_scope_line = scope_start + i
       break
     end
   end
 
-  -- Search upward from scope_end down to scope_start + 1 for last body line
-  local last_scope_line = nil
-  local scan_limit_up = math.max(scope_start + 1, scope_end - 30)
-  local lw_end = get_line_width(scope_end)
-  if lw_end and lw_end > active_col then
-    last_scope_line = scope_end
-  else
-    for l = scope_end - 1, scan_limit_up, -1 do
-      local lw = get_line_width(l)
-      if lw and lw > active_col then
-        last_scope_line = l
-        break
-      end
+  for i = #lines, 1, -1 do
+    local text = lines[i]
+    local lead = text:match("^%s*") or ""
+    if text ~= "" and #lead ~= #text and utils.lead_display_width(lead, tabstop) > active_col then
+      last_scope_line = scope_start + i
+      break
     end
   end
 
@@ -558,25 +487,33 @@ end
 
 --- Resolves scope boundaries using Treesitter AST traversal.
 ---@param buf integer Buffer handle
----@param win integer Window handle
+---@param _win integer Window handle (unused; resolution is cursor-based)
 ---@param cursor_row integer 1-indexed row
 ---@param cursor_col integer 0-indexed col
 ---@param start_node userdata|nil Optional starting node
 ---@return indentinator.ScopeInfo|nil
-function M.resolve_treesitter_scope(buf, win, cursor_row, cursor_col, start_node)
+function M.resolve_treesitter_scope(buf, _win, cursor_row, cursor_col, start_node)
   local parser = M.get_parser(buf)
   if not parser then
     return nil
   end
 
-  -- Incremental parse only if dirty or no tree exists
+  -- Parse only when the buffer changed or has no tree yet. `parse(true)` is a
+  -- full parse that also runs injection queries, so it is deliberately deferred
+  -- to edits rather than run on every cursor movement.
   if cache.is_dirty(buf) or #parser:trees() == 0 then
-    pcall(function() parser:parse() end)
+    pcall(function()
+      parser:parse(true)
+    end)
     cache.mark_clean(buf)
   end
 
+  local cfg = config.get(buf)
+
   local row = cursor_row - 1
   local col = cursor_col
+  local lang_tree = language_for_range(parser, row, col, row, col)
+  local lang = lang_tree:lang()
 
   local node = start_node
   if not node then
@@ -601,11 +538,14 @@ function M.resolve_treesitter_scope(buf, win, cursor_row, cursor_col, start_node
       end
     end
 
-    local ok_n, n = pcall(vim.treesitter.get_node, { bufnr = buf, pos = { query_row, query_col }, ignore_injections = false })
+    local ok_n, n =
+      pcall(vim.treesitter.get_node, { bufnr = buf, pos = { query_row, query_col }, ignore_injections = false })
     node = ok_n and n or nil
 
     if not node then
-      local ok_t, trees = pcall(function() return parser:trees() end)
+      local ok_t, trees = pcall(function()
+        return parser:trees()
+      end)
       if ok_t and trees and trees[1] then
         local root = trees[1]:root()
         if root then
@@ -626,7 +566,7 @@ function M.resolve_treesitter_scope(buf, win, cursor_row, cursor_col, start_node
   local scope_node = nil
   while curr do
     local s_r, _, e_r, _ = curr:range()
-    if s_r < e_r and is_valid_scope_node(curr) then
+    if s_r < e_r and is_valid_scope_node(curr, lang, cfg) then
       scope_node = curr
       break
     end
@@ -636,9 +576,6 @@ function M.resolve_treesitter_scope(buf, win, cursor_row, cursor_col, start_node
   if not scope_node then
     return nil
   end
-
-  -- Promote block container to parent construct
-  scope_node = promote_block_node(scope_node)
 
   -- Partition multi-branch conditional and exception constructs (if / elif / else, try / except / finally)
   local s_row, s_col, e_row, e_col = get_branch_range(scope_node, row)
@@ -664,9 +601,10 @@ function M.resolve_treesitter_scope(buf, win, cursor_row, cursor_col, start_node
     active_col = math.floor(raw_disp / width) * width
   end
 
-  local child_ranges = collect_child_scope_ranges(scope_node)
-  local first_body_line, last_body_line = M.find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
-  local delims = M.get_boundary_delimiters(buf, scope_node, s_row, e_row, true)
+  local child_ranges = collect_child_scope_ranges(scope_node, lang, cfg)
+  local first_body_line, last_body_line =
+    M.find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
+  local delims = M.get_boundary_delimiters(buf, scope_node, s_row, e_row, true, lang_tree)
 
   ---@type indentinator.ScopeInfo
   return {
@@ -763,7 +701,9 @@ function M.resolve_indent_scope(buf, win, custom_row)
   local curr_up = target_row - 1
   while curr_up > 0 do
     local ok_u, u_lines = pcall(api.nvim_buf_get_lines, buf, curr_up - 1, curr_up, false)
-    if not ok_u or not u_lines or not u_lines[1] then break end
+    if not ok_u or not u_lines or not u_lines[1] then
+      break
+    end
     local u_text = u_lines[1]
     local u_lead = u_text:match("^%s*")
     if u_text ~= "" and u_lead ~= u_text then
@@ -782,7 +722,9 @@ function M.resolve_indent_scope(buf, win, custom_row)
   local curr_down = target_row + 1
   while curr_down <= line_count do
     local ok_d, d_lines = pcall(api.nvim_buf_get_lines, buf, curr_down - 1, curr_down, false)
-    if not ok_d or not d_lines or not d_lines[1] then break end
+    if not ok_d or not d_lines or not d_lines[1] then
+      break
+    end
     local d_text = d_lines[1]
     local d_lead = d_text:match("^%s*")
     if d_text ~= "" and d_lead ~= d_text then
@@ -811,7 +753,8 @@ function M.resolve_indent_scope(buf, win, custom_row)
     end
   end
 
-  local first_body_line, last_body_line = M.find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
+  local first_body_line, last_body_line =
+    M.find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
 
   return {
     scope_start = scope_start,
@@ -845,8 +788,8 @@ function M.get_parent_scope(buf, win, current_scope_start, current_node, use_tre
   if use_treesitter ~= false and current_node then
     local parent = current_node:parent()
     if parent then
-      local p_s_row, _, p_e_row, _ = parent:range()
-      local p_scope = M.resolve_treesitter_scope(buf, win, p_s_row + 1, 0, parent)
+      local p_s_row, p_s_col, _, _ = parent:range()
+      local p_scope = M.resolve_treesitter_scope(buf, win, p_s_row + 1, p_s_col, parent)
       if p_scope and p_scope.scope_start < current_scope_start then
         return p_scope.scope_start, p_scope.scope_end, p_scope.active_col, p_scope.node
       end
@@ -865,7 +808,9 @@ function M.get_parent_scope(buf, win, current_scope_start, current_node, use_tre
   local scan_row = current_scope_start - 1
   while scan_row > 0 do
     local text, lead, row = utils.find_non_blank_up(buf, scan_row, 500)
-    if not text or not row then break end
+    if not text or not row then
+      break
+    end
     local disp = utils.lead_display_width(lead, tabstop)
     if disp < curr_start_col or (curr_start_col == 0 and row < current_scope_start) then
       local s = M.resolve_indent_scope(buf, win, row)
