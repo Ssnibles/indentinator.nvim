@@ -3,3 +3,4 @@ result
 .direnv/
 .envrc
 Session.vim
+scratch_*.txt
