@@ -24,7 +24,6 @@ function M.clear_buf_state(buf)
     return
   end
   cache.clear_buf(buf)
-  cache.state.enabled[buf] = nil
   if cache.state.rendered then
     cache.state.rendered[buf] = nil
   end

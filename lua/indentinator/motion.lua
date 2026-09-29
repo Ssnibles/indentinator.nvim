@@ -24,7 +24,7 @@ end
 ---@return boolean Success status
 function M.jump_to_scope_start(win)
   local target_win, buf = resolve_target(win)
-  local ts = config.values.scope and config.values.scope.treesitter
+  local ts = config.get(buf).scope.treesitter
   local scope_start, _, active_col, scope_node = treesitter.get_scope(buf, target_win, ts)
   if not scope_start then
     return false
@@ -58,7 +58,7 @@ end
 ---@return boolean Success status
 function M.jump_to_scope_end(win)
   local target_win, buf = resolve_target(win)
-  local ts = config.values.scope and config.values.scope.treesitter
+  local ts = config.get(buf).scope.treesitter
   local scope_start, scope_end, active_col, scope_node = treesitter.get_scope(buf, target_win, ts)
   if not scope_end then
     return false
@@ -92,7 +92,7 @@ end
 ---@return boolean Success status
 function M.select_scope(inner, win)
   local target_win, buf = resolve_target(win)
-  local ts = config.values.scope and config.values.scope.treesitter
+  local ts = config.get(buf).scope.treesitter
   local scope_start, scope_end = treesitter.get_scope(buf, target_win, ts)
   if not scope_start or not scope_end then
     return false

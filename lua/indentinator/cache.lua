@@ -1,5 +1,6 @@
 --- Scope memoization, cursor position tracking, and buffer dirty state management.
---- Optimised for minimal GC pressure with zero table allocations during steady-state cursor navigation.
+--- The steady-state cursor fast path allocates nothing; allocations only occur
+--- when the active scope actually changes.
 ---@class indentinator.cache
 local M = {}
 
@@ -29,7 +30,8 @@ local M = {}
 ---@type table<integer, indentinator.WinCacheEntry>
 M.win_cache = {}
 
---- Per-buffer memoization cache (tick -> key -> result)
+--- Per-buffer bookkeeping exposed through the `state.cache` facade.
+--- The authoritative scope memoization lives in `M.win_cache`.
 ---@type table<integer, table>
 M.buf_cache = {}
 
@@ -56,7 +58,6 @@ end
 
 --- Compatibility state table for backwards compatibility
 M.state = {
-  enabled = {},
   cache = M.buf_cache,
   timers = {},
   rendered = {},
@@ -69,7 +70,7 @@ M.state = {
 ---@param cursor_row integer 1-indexed cursor row
 ---@param cursor_col integer 0-indexed cursor column
 ---@return boolean in_scope True if cursor remains inside the active scope node
-function M.is_cursor_in_scope(win, buf, cursor_row, cursor_col)
+function M.is_cursor_in_scope(win, buf, cursor_row, _cursor_col)
   local entry = M.win_cache[win]
   if not entry or entry.buf ~= buf then
     return false
@@ -147,19 +148,12 @@ function M.set_win_scope(win, buf, cursor_row, cursor_col, scope)
     entry.scope = scope
   end
 
-  -- Also populate buf_cache for backward compatibility
+  -- Maintain a per-buffer entry for the public `state.cache` facade. The
+  -- authoritative memoization lives in `M.win_cache`; this only records the
+  -- buffer's latest changedtick so external checks can confirm it is populated.
   local bc = M.buf_cache[buf]
   if not bc or bc._tick ~= tick then
-    bc = { _tick = tick }
-    M.buf_cache[buf] = bc
-    M.state.cache[buf] = bc
-  end
-  local ts_flag = (scope and scope.is_ts) and 1 or 0
-  local key = string.format("%d:%d:%d:%d", win, cursor_row, cursor_col, ts_flag)
-  if scope then
-    bc[key] = { scope.scope_start, scope.scope_end, scope.active_col, scope.node }
-  else
-    bc[key] = false
+    M.buf_cache[buf] = { _tick = tick }
   end
 end
 
@@ -168,7 +162,6 @@ end
 function M.mark_dirty(buf)
   M.buf_dirty[buf] = true
   M.buf_cache[buf] = nil
-  M.state.cache[buf] = nil
 end
 
 --- Checks whether a buffer is marked as dirty.
@@ -189,7 +182,7 @@ end
 function M.clear_buf(buf)
   if not buf then
     M.buf_cache = {}
-    M.state.cache = {}
+    M.state.cache = M.buf_cache
     M.buf_dirty = {}
     M.buf_attached = {}
     M.win_cache = {}
@@ -197,7 +190,6 @@ function M.clear_buf(buf)
   end
 
   M.buf_cache[buf] = nil
-  M.state.cache[buf] = nil
   M.buf_dirty[buf] = nil
   M.buf_attached[buf] = nil
 
@@ -214,8 +206,12 @@ function M.clear_win(win)
   M.win_cache[win] = nil
   local timer = M.state.timers[win]
   if timer then
-    pcall(function() timer:stop() end)
-    pcall(function() timer:close() end)
+    pcall(function()
+      timer:stop()
+    end)
+    pcall(function()
+      timer:close()
+    end)
     M.state.timers[win] = nil
   end
 end
@@ -223,7 +219,7 @@ end
 --- Clears all scope caches across all buffers and windows.
 function M.clear()
   M.buf_cache = {}
-  M.state.cache = {}
+  M.state.cache = M.buf_cache
   M.win_cache = {}
   M.buf_dirty = {}
 end
