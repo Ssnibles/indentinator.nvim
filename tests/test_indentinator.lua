@@ -5,12 +5,7 @@
 local function assert_eq(actual, expected, msg)
   if actual ~= expected then
     error(
-      string.format(
-        "%s: expected %s, got %s",
-        msg or "Assertion failed",
-        vim.inspect(expected),
-        vim.inspect(actual)
-      )
+      string.format("%s: expected %s, got %s", msg or "Assertion failed", vim.inspect(expected), vim.inspect(actual))
     )
   end
 end
@@ -121,8 +116,8 @@ ind.enable(cleanup_buf)
 assert_eq(ind.is_enabled(cleanup_buf), true, "Buffer should be enabled")
 
 vim.api.nvim_exec_autocmds("BufDelete", { buffer = cleanup_buf })
-local state_mod = require("indentinator.state")
-assert_eq(state_mod.state.enabled[cleanup_buf], nil, "BufDelete should clear state entry")
+local cfg_mod = require("indentinator.config")
+assert_eq(cfg_mod.buffer_values[cleanup_buf], nil, "BufDelete should clear per-buffer config")
 pcall(vim.api.nvim_buf_delete, cleanup_buf, { force = true })
 print("  ✓ Buffer lifecycle cleanup verified successfully.")
 
@@ -147,6 +142,7 @@ local scroll_marks = vim.api.nvim_buf_get_extmarks(scroll_buf, render.NS, 0, -1,
 assert_eq(#scroll_marks > 0, true, "Horizontal scroll should produce extmarks")
 local scroll_win_col = scroll_marks[1][4].virt_text_win_col
 assert_eq(scroll_win_col, 0, "virt_text_win_col should be adjusted for leftcol scroll")
+print("  ✓ Horizontal scroll (leftcol) positioning verified.")
 
 pcall(vim.api.nvim_buf_delete, scroll_buf, { force = true })
 
@@ -262,12 +258,12 @@ print("  ✓ Blank line policy configuration verified successfully.")
 print("[Test 13] Testing Delimiters Configuration & Scope Corner Uniformity...")
 local rainbow_test_buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_buf_set_lines(rainbow_test_buf, 0, -1, false, {
-  "function scope_rainbow_test() {",
-  "  if (true) {",
+  "function scope_rainbow_test()",
+  "  if (true) then",
   "    print('hello line 1')",
   "    print('hello line 2')",
-  "  }",
-  "}",
+  "  end",
+  "end",
 })
 vim.api.nvim_set_option_value("filetype", "lua", { buf = rainbow_test_buf })
 vim.api.nvim_set_option_value("shiftwidth", 2, { buf = rainbow_test_buf })
@@ -292,7 +288,11 @@ ind.setup({
 ind.force_update()
 
 local marks_a_corner = vim.api.nvim_buf_get_extmarks(
-  rainbow_test_buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true }
+  rainbow_test_buf,
+  render.NS,
+  { 2, 0 },
+  { 2, -1 },
+  { details = true }
 )
 assert_eq(#marks_a_corner > 0, true, "Extmarks should exist for line 3")
 assert_eq(
@@ -322,11 +322,19 @@ ind.force_update()
 
 -- Line 2 (0-indexed 1) is scope_start with delimiters `(`, `)`, `{`
 local marks_b_start = vim.api.nvim_buf_get_extmarks(
-  rainbow_test_buf, render.NS, { 1, 0 }, { 1, -1 }, { details = true }
+  rainbow_test_buf,
+  render.NS,
+  { 1, 0 },
+  { 1, -1 },
+  { details = true }
 )
 -- Line 3 (0-indexed 2) is first body line with top corner `┌`
 local marks_b_topcorner = vim.api.nvim_buf_get_extmarks(
-  rainbow_test_buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true }
+  rainbow_test_buf,
+  render.NS,
+  { 2, 0 },
+  { 2, -1 },
+  { details = true }
 )
 
 local delim_hl = nil

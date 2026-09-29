@@ -5,12 +5,7 @@
 local function assert_eq(actual, expected, msg)
   if actual ~= expected then
     error(
-      string.format(
-        "%s: expected %s, got %s",
-        msg or "Assertion failed",
-        vim.inspect(expected),
-        vim.inspect(actual)
-      )
+      string.format("%s: expected %s, got %s", msg or "Assertion failed", vim.inspect(expected), vim.inspect(actual))
     )
   end
 end
@@ -19,7 +14,6 @@ print("=== Running Indentinator Scope Detection Precision Tests ===")
 
 local ind = require("indentinator")
 local treesitter = require("indentinator.treesitter")
-local renderer = require("indentinator.renderer")
 
 ind.setup({
   debounce_ms = 0,

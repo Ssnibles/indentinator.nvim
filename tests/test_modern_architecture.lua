@@ -1,16 +1,11 @@
 -- Architecture and Performance Verification Test Suite for Indentinator.nvim
--- Verifies demand-driven rendering, ephemeral extmarks, scope node boundary caching,
--- and low-latency cursor tracking.
+-- Verifies viewport-scoped extmark rendering and clearing, scope node boundary
+-- caching, and low-latency cursor tracking.
 
 local function assert_eq(actual, expected, msg)
   if actual ~= expected then
     error(
-      string.format(
-        "%s: expected %s, got %s",
-        msg or "Assertion failed",
-        vim.inspect(expected),
-        vim.inspect(actual)
-      )
+      string.format("%s: expected %s, got %s", msg or "Assertion failed", vim.inspect(expected), vim.inspect(actual))
     )
   end
 end
@@ -32,8 +27,8 @@ ind.setup({
   },
 })
 
--- Test 1: Decoration Provider Registration & Ephemeral Redraw
-print("[Modern Test 1] Testing Decoration Provider & Ephemeral Mark Redraw...")
+-- Test 1: Viewport Rendering & Namespace Clearing
+print("[Modern Test 1] Testing Viewport Rendering & Namespace Clearing...")
 local buf = vim.api.nvim_create_buf(false, true)
 local sample = {
   "function test_decor()",
@@ -52,15 +47,17 @@ local win = vim.api.nvim_get_current_win()
 vim.api.nvim_win_set_buf(win, buf)
 vim.api.nvim_win_set_cursor(win, { 3, 4 })
 ind.enable(buf)
+renderer.render(buf, win)
+
+-- Enabling must paint guides for the visible viewport.
+local viewport_marks = vim.api.nvim_buf_get_extmarks(buf, renderer.NS, 0, -1, {})
+assert_eq(#viewport_marks > 0, true, "Enabling must render viewport guides")
+
+-- Clearing the namespace must leave no residual marks (no ghost marks).
 renderer.clear(buf)
-
--- Redraw triggers decoration provider on_win and on_line
-vim.cmd("redraw")
-
--- Ephemeral extmarks do NOT pollute buffer's persistent marktree
-local persistent_marks = vim.api.nvim_buf_get_extmarks(buf, renderer.NS, 0, -1, {})
-assert_eq(#persistent_marks, 0, "Ephemeral extmarks must not be stored in buffer marktree")
-print("  ✓ Decoration provider ephemeral rendering verified.")
+local cleared_marks = vim.api.nvim_buf_get_extmarks(buf, renderer.NS, 0, -1, {})
+assert_eq(#cleared_marks, 0, "clear() must remove all namespace extmarks")
+print("  ✓ Viewport rendering & namespace clearing verified.")
 
 -- Test 2: Node Boundary Caching (No Recalculation Within Scope)
 print("[Modern Test 2] Testing Active Scope AST Node Boundary Caching...")
@@ -113,7 +110,11 @@ assert_eq(fn_scope_end, 7, "Outer scope end should be line 7")
 assert_eq(cache.is_cursor_in_scope(win, nest_buf, 6, 2), true, "Cursor at line 6 should remain in function scope")
 
 -- Cursor moves into nested if block on line 4 (local b = 2) -> must detect child scope entry
-assert_eq(cache.is_cursor_in_scope(win, nest_buf, 4, 4), false, "Cursor inside child if block must trigger scope re-resolution")
+assert_eq(
+  cache.is_cursor_in_scope(win, nest_buf, 4, 4),
+  false,
+  "Cursor inside child if block must trigger scope re-resolution"
+)
 
 vim.api.nvim_win_set_cursor(win, { 4, 4 })
 local if_scope_start, if_scope_end = treesitter.get_scope(nest_buf, win, true)
@@ -143,14 +144,14 @@ print("[Modern Test 5] Testing Graceful Large File Degradation...")
 local big_buf = vim.api.nvim_create_buf(false, true)
 local big_lines = {}
 for i = 1, 60 do -- max_file_lines is 50
-  big_lines[i] = "  local x = " .. i
+  big_lines[i] = "    local x = " .. i
 end
 vim.api.nvim_buf_set_lines(big_buf, 0, -1, false, big_lines)
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = big_buf })
+vim.api.nvim_set_option_value("tabstop", 2, { buf = big_buf })
 vim.api.nvim_win_set_buf(win, big_buf)
 ind.enable(big_buf)
 
-local can_prep = renderer.prepare_win_context(win, big_buf, 0, 10, #big_lines)
--- Should return true for context if called directly, but on_win decoration callback will skip it
 assert_eq(vim.api.nvim_buf_line_count(big_buf) > ind.config.max_file_lines, true, "Big buffer exceeds max lines")
 ind.force_update()
 local big_marks = vim.api.nvim_buf_get_extmarks(big_buf, renderer.NS, 0, -1, {})
@@ -158,5 +159,40 @@ assert_eq(#big_marks, 0, "Exceeding max_file_lines must produce 0 extmarks")
 
 pcall(vim.api.nvim_buf_delete, big_buf, { force = true })
 print("  ✓ Graceful large file degradation verified.")
+
+-- Test 6: Regression - stale marks cleared when a buffer grows past max_file_lines
+print("[Modern Test 6] Testing Stale Mark Cleanup When Buffer Grows Past Limit...")
+local grow_buf = vim.api.nvim_create_buf(false, true)
+local small_lines = {}
+for i = 1, 40 do -- below max_file_lines (50)
+  small_lines[i] = "    local x = " .. i
+end
+vim.api.nvim_buf_set_lines(grow_buf, 0, -1, false, small_lines)
+vim.api.nvim_set_option_value("shiftwidth", 2, { buf = grow_buf })
+vim.api.nvim_set_option_value("tabstop", 2, { buf = grow_buf })
+vim.api.nvim_win_set_buf(win, grow_buf)
+ind.enable(grow_buf)
+assert_eq(
+  #vim.api.nvim_buf_get_extmarks(grow_buf, renderer.NS, 0, -1, {}) > 0,
+  true,
+  "A buffer below max_file_lines should render guides"
+)
+
+-- Grow the buffer past the threshold; previous viewport marks must be cleared.
+local grown_lines = {}
+for i = 41, 80 do
+  grown_lines[#grown_lines + 1] = "    local x = " .. i
+end
+vim.api.nvim_buf_set_lines(grow_buf, 40, -1, false, grown_lines)
+assert_eq(vim.api.nvim_buf_line_count(grow_buf) > ind.config.max_file_lines, true, "Grown buffer exceeds max lines")
+ind.force_update()
+assert_eq(
+  #vim.api.nvim_buf_get_extmarks(grow_buf, renderer.NS, 0, -1, {}),
+  0,
+  "Exceeding max_file_lines must clear previously rendered extmarks"
+)
+
+pcall(vim.api.nvim_buf_delete, grow_buf, { force = true })
+print("  ✓ Stale mark cleanup past max_file_lines verified.")
 
 print("=== All Modern Architecture Tests Passed Successfully! ===")
