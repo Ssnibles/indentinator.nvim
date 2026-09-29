@@ -1,12 +1,14 @@
---- High-performance atomic viewport renderer module for indentinator.nvim.
+--- Viewport renderer module for indentinator.nvim.
 --- Handles extmark drawing for standard indent guides, rainbow colors, scope corners,
---- and boundary highlights. Optimised for zero allocations in hot redraw loops.
+--- and boundary highlights. Uses viewport-scoped persistent extmarks and reuses
+--- option tables to minimise allocations in hot redraw loops.
 ---@class indentinator.render
 local M = {}
 
 local config = require("indentinator.config")
 local cache = require("indentinator.cache")
 local treesitter = require("indentinator.treesitter")
+local hooks = require("indentinator.hooks")
 local utils = require("indentinator.utils")
 
 local api = vim.api
@@ -19,7 +21,6 @@ local nvim_list_wins = api.nvim_list_wins
 local nvim_win_get_buf = api.nvim_win_get_buf
 local nvim_buf_get_lines = api.nvim_buf_get_lines
 local nvim_buf_line_count = api.nvim_buf_line_count
-local fn_foldclosed = vim.fn.foldclosed
 
 --- Extmark namespace handle for indentinator
 M.NS = api.nvim_create_namespace("indentinator")
@@ -51,7 +52,7 @@ local function get_virt_text(char, hl)
   return vt
 end
 
---- Reusable option tables for nvim_buf_set_extmark (zero GC allocations).
+--- Reusable option tables for nvim_buf_set_extmark to reduce allocations.
 local EXTMARK_OPTS = {
   virt_text = nil,
   virt_text_win_col = 0,
@@ -141,6 +142,12 @@ function M.set_hl()
   end
 end
 
+--- Clears cached render context associated with a window.
+---@param win integer Window handle
+function M.clear_win(win)
+  WIN_CTX[win] = nil
+end
+
 --- Clears all extmarks and cached render state for a buffer.
 ---@param buf integer Buffer handle
 function M.clear(buf)
@@ -172,6 +179,7 @@ function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
       tabstop = 8,
       leftcol = 0,
       scope = nil,
+      lines = nil,
       scope_enabled = true,
       indent_enabled = true,
       rainbow_enabled = false,
@@ -192,25 +200,24 @@ function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
     ctx.botrow = botrow
   end
 
-  local indent_cfg = config.values.indent or {}
-  local scope_cfg = config.values.scope or {}
+  local cfg = config.get(buf)
+  local indent_cfg = cfg.indent or {}
+  local scope_cfg = cfg.scope or {}
   local rainbow_cfg = indent_cfg.rainbow or {}
-  local delims_cfg = config.values.delimiters or {}
+  local delims_cfg = cfg.delimiters or {}
 
   ctx.indent_cfg = indent_cfg
   ctx.scope_cfg = scope_cfg
   ctx.delims_cfg = delims_cfg
   ctx.indent_enabled = indent_cfg.enabled ~= false
   ctx.scope_enabled = scope_cfg.enabled ~= false
-  ctx.rainbow_enabled = rainbow_cfg.enabled == true
-    and type(rainbow_cfg.colors) == "table"
-    and #rainbow_cfg.colors > 0
+  ctx.rainbow_enabled = rainbow_cfg.enabled == true and type(rainbow_cfg.colors) == "table" and #rainbow_cfg.colors > 0
   ctx.delimiters_enabled = ctx.scope_enabled and delims_cfg.enabled ~= false
-  ctx.priority = config.values.priority or 100
+  ctx.priority = cfg.priority or 100
   ctx.indent_width = utils.indent_width(buf)
   ctx.tabstop = utils.buffer_tabstop(buf)
 
-  local rainbow_colors = (rainbow_cfg and rainbow_cfg.colors) or config.defaults.indent.rainbow.colors
+  local rainbow_colors = rainbow_cfg.colors or config.defaults.indent.rainbow.colors
   ctx.rainbow_count = #rainbow_colors
 
   -- Retrieve leftcol horizontal scrolling offset
@@ -222,7 +229,7 @@ function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
   ctx.leftcol = (ok_v and type(view) == "number" and view >= 0) and view or 0
 
   -- Resolve active scope for current cursor position
-  if ctx.scope_enabled then
+  if ctx.scope_enabled and hooks.is_scope_active(buf) then
     local cursor = api.nvim_win_get_cursor(win)
     if cache.is_cursor_in_scope(win, buf, cursor[1], cursor[2]) then
       ctx.scope = cache.get_win_scope(win, buf)
@@ -251,6 +258,7 @@ function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
   if not ok_lines or not all_lines or #all_lines == 0 then
     return false
   end
+  ctx.lines = all_lines
 
   local n = #all_lines
   local widths = ctx.widths
@@ -282,7 +290,7 @@ function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
       end
       local run_end = i - 1
 
-      local up_w = 0
+      local up_w
       if run_start > 1 then
         up_w = widths[run_start - 1]
       else
@@ -290,7 +298,7 @@ function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
         up_w = up_lead and utils.lead_display_width(up_lead, ctx.tabstop) or 0
       end
 
-      local down_w = 0
+      local down_w
       if run_end < n then
         down_w = widths[run_end + 1]
       else
@@ -329,9 +337,7 @@ function M.render_line(buf, win, row)
     return
   end
 
-  -- Skip folded lines (unless it's the fold header)
-  local fold_start = fn_foldclosed(line_1based)
-  if fold_start ~= -1 and fold_start ~= line_1based then
+  if hooks.skip_line(buf, row, (ctx.lines and ctx.lines[batch_idx]) or "") then
     return
   end
 
@@ -349,7 +355,11 @@ function M.render_line(buf, win, row)
   end
 
   -- Scope boundary delimiters (brackets and keywords)
-  if ctx.delimiters_enabled and in_scope_range and (line_1based == scope.scope_start or line_1based == scope.scope_end) then
+  if
+    ctx.delimiters_enabled
+    and in_scope_range
+    and (line_1based == scope.scope_start or line_1based == scope.scope_end)
+  then
     local act_level = math.max(1, math.floor((active_col or width) / width))
     local r_idx = (act_level - 1) % ctx.rainbow_count + 1
     local delimiter_hl = ctx.delims_cfg.rainbow and ("IndentinatorDelimiter" .. r_idx)
@@ -382,7 +392,11 @@ function M.render_line(buf, win, row)
             if has_corners and scope.first_body_line < scope.last_body_line then
               if line_1based == scope.first_body_line and ctx.scope_cfg.char_top and ctx.scope_cfg.char_top ~= "" then
                 char = ctx.scope_cfg.char_top
-              elseif line_1based == scope.last_body_line and ctx.scope_cfg.char_bottom and ctx.scope_cfg.char_bottom ~= "" then
+              elseif
+                line_1based == scope.last_body_line
+                and ctx.scope_cfg.char_bottom
+                and ctx.scope_cfg.char_bottom ~= ""
+              then
                 char = ctx.scope_cfg.char_bottom
               end
             end
@@ -418,13 +432,8 @@ function M.render_line(buf, win, row)
   end
 end
 
---- Provider registration compatibility stub
-function M.setup_decoration_provider()
-  -- Intentionally decoupled from ephemeral callbacks to eliminate partial redraw tearing
-end
-
---- Renders indent and scope guides atomically for visible lines in a window.
---- Completely clears previous viewport namespace to guarantee zero ghost marks.
+--- Renders indent and scope guides for the visible lines of a window.
+--- Clears the previous viewport namespace first to avoid ghost marks.
 ---@param buf integer Buffer handle
 ---@param win integer Window handle
 function M.render(buf, win)
@@ -432,14 +441,17 @@ function M.render(buf, win)
     return
   end
 
-  if not config.is_enabled(buf, cache.state.enabled[buf]) then
+  if not config.is_enabled(buf) or not hooks.is_active(buf) then
     M.clear(buf)
     return
   end
 
+  local cfg = config.get(buf)
   local total_lines = nvim_buf_line_count(buf)
-  local max_lines = config.values.max_file_lines or 10000
-  if total_lines > max_lines then
+  if total_lines > cfg.max_file_lines then
+    -- Clear any marks left from when the buffer was within the threshold,
+    -- otherwise guides remain as stale ghost marks after the file grows.
+    M.clear(buf)
     return
   end
 
@@ -457,8 +469,8 @@ function M.render(buf, win)
     return
   end
 
-  local start_line = math.max(1, w0)
-  local end_line = math.min(total_lines, w1)
+  local start_line = math.max(1, w0 - cfg.viewport_buffer)
+  local end_line = math.min(total_lines, w1 + cfg.viewport_buffer)
 
   -- Clear previous and current viewport ranges to guarantee zero ghost marks
   local prev = cache.state.rendered and cache.state.rendered[buf] or nil
