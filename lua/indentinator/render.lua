@@ -15,7 +15,6 @@ local api = vim.api
 local nvim_buf_is_valid = api.nvim_buf_is_valid
 local nvim_buf_is_loaded = api.nvim_buf_is_loaded
 local nvim_win_is_valid = api.nvim_win_is_valid
-local nvim_buf_set_extmark = api.nvim_buf_set_extmark
 local nvim_buf_clear_namespace = api.nvim_buf_clear_namespace
 local nvim_list_wins = api.nvim_list_wins
 local nvim_win_get_buf = api.nvim_win_get_buf
@@ -70,6 +69,30 @@ local DELIM_OPTS = {
   hl_group = nil,
   priority = 115,
 }
+
+--- Distinct extmark failures already reported, so a persistent error is logged
+--- once instead of on every line of every redraw.
+local reported_extmark_errors = {}
+
+--- Sets an extmark, surfacing the first occurrence of each distinct failure via
+--- `vim.notify`. Errors are reported but never abort the render loop, since an
+--- extmark can legitimately fail if the buffer/window changed mid-render.
+---@param buf integer Buffer handle
+---@param row integer 0-indexed row
+---@param col integer 0-indexed column
+---@param opts table Extmark options
+---@return boolean ok
+local function set_extmark(buf, row, col, opts)
+  local ok, err = pcall(api.nvim_buf_set_extmark, buf, M.NS, row, col, opts)
+  if not ok then
+    local msg = tostring(err)
+    if not reported_extmark_errors[msg] then
+      reported_extmark_errors[msg] = true
+      vim.notify("indentinator: failed to set extmark: " .. msg, vim.log.levels.WARN)
+    end
+  end
+  return ok
+end
 
 ---@class indentinator.WinRenderContext
 ---@field buf integer Buffer handle
@@ -153,9 +176,7 @@ end
 function M.clear(buf)
   if buf and nvim_buf_is_valid(buf) then
     pcall(nvim_buf_clear_namespace, buf, M.NS, 0, -1)
-    if cache.state.rendered then
-      cache.state.rendered[buf] = nil
-    end
+    cache.clear_rendered_buf(buf)
   end
 end
 
@@ -351,7 +372,7 @@ function M.render_line(buf, win, row)
   if ctx.scope_enabled and in_scope_range and line_1based == scope.scope_start and ctx.scope_cfg.hl_header then
     HEADER_OPTS.line_hl_group = ctx.scope_cfg.hl_header
     HEADER_OPTS.priority = ctx.priority - 1
-    pcall(nvim_buf_set_extmark, buf, M.NS, row, 0, HEADER_OPTS)
+    set_extmark(buf, row, 0, HEADER_OPTS)
   end
 
   -- Scope boundary delimiters (brackets and keywords)
@@ -371,19 +392,32 @@ function M.render_line(buf, win, row)
           DELIM_OPTS.end_col = span.e_col
           DELIM_OPTS.hl_group = delimiter_hl
           DELIM_OPTS.priority = ctx.priority + 15
-          pcall(nvim_buf_set_extmark, buf, M.NS, row, span.s_col, DELIM_OPTS)
+          set_extmark(buf, row, span.s_col, DELIM_OPTS)
         end
       end
     end
   end
 
-  -- Indent and scope guide columns
+  -- Indent and scope guide columns.
+  --
+  -- Passive guides are batched into a single extmark per line: each chunk is a
+  -- run of guide characters plus the spaces between them, so a line with N
+  -- guides costs one API call instead of N. The active scope guide keeps its
+  -- own extmark so it retains the higher priority and its distinct
+  -- character/highlight.
   if max_col >= width then
+    local passive_chunks = nil
+    local passive_win_col = nil
+    local passive_prev_col = nil
+    local passive_text = nil
+    local passive_hl = nil
+    local active_win_col, active_char, active_hl = nil, nil, nil
+
     for col = width, max_col, width do
       local win_col = col - ctx.leftcol
       if win_col >= 0 then
         local is_active = in_scope_range and active_col and (col == active_col)
-        local char, hl
+        local char, hl, active_guide = nil, nil, false
 
         if is_active and ctx.scope_enabled then
           if not is_blank or ctx.scope_cfg.show_empty ~= false then
@@ -406,6 +440,7 @@ function M.render_line(buf, win, row)
             local rainbow_hl = "IndentinatorRainbow" .. r_idx
 
             hl = ctx.scope_cfg.rainbow and rainbow_hl or (ctx.scope_cfg.hl or "IndentinatorScope")
+            active_guide = true
           end
         elseif ctx.indent_enabled then
           if not is_blank or ctx.indent_cfg.show_empty ~= false then
@@ -421,13 +456,42 @@ function M.render_line(buf, win, row)
         end
 
         if char and hl then
-          local vt = get_virt_text(char, hl)
-          EXTMARK_OPTS.virt_text = vt
-          EXTMARK_OPTS.virt_text_win_col = win_col
-          EXTMARK_OPTS.priority = is_active and (ctx.priority + 10) or ctx.priority
-          pcall(nvim_buf_set_extmark, buf, M.NS, row, 0, EXTMARK_OPTS)
+          if active_guide then
+            active_win_col, active_char, active_hl = win_col, char, hl
+          else
+            local gap = passive_prev_col and (col - passive_prev_col - 1) or 0
+            if passive_text and passive_hl == hl then
+              passive_text = passive_text .. string.rep(" ", gap) .. char
+            else
+              if passive_text then
+                passive_chunks = passive_chunks or {}
+                passive_chunks[#passive_chunks + 1] = { passive_text, passive_hl }
+              end
+              passive_win_col = passive_win_col or win_col
+              passive_text = string.rep(" ", gap) .. char
+              passive_hl = hl
+            end
+            passive_prev_col = col
+          end
         end
       end
+    end
+
+    if passive_text then
+      passive_chunks = passive_chunks or {}
+      passive_chunks[#passive_chunks + 1] = { passive_text, passive_hl }
+    end
+    if passive_chunks and passive_win_col then
+      EXTMARK_OPTS.virt_text = passive_chunks
+      EXTMARK_OPTS.virt_text_win_col = passive_win_col
+      EXTMARK_OPTS.priority = ctx.priority
+      set_extmark(buf, row, 0, EXTMARK_OPTS)
+    end
+    if active_win_col then
+      EXTMARK_OPTS.virt_text = get_virt_text(active_char, active_hl)
+      EXTMARK_OPTS.virt_text_win_col = active_win_col
+      EXTMARK_OPTS.priority = ctx.priority + 10
+      set_extmark(buf, row, 0, EXTMARK_OPTS)
     end
   end
 end
@@ -455,6 +519,15 @@ function M.render(buf, win)
     return
   end
 
+  -- Off-screen render: the target window does not display this buffer, so its
+  -- per-window viewport bookkeeping cannot be trusted. Clear the whole
+  -- namespace so earlier marks for this buffer cannot linger as ghosts.
+  local ok_wb, win_buf = pcall(nvim_win_get_buf, win)
+  if not ok_wb or win_buf ~= buf then
+    pcall(nvim_buf_clear_namespace, buf, M.NS, 0, -1)
+    cache.clear_rendered_buf(buf)
+  end
+
   local ok_v, view = pcall(function()
     return api.nvim_win_call(win, function()
       return { vim.fn.line("w0"), vim.fn.line("w$") }
@@ -472,13 +545,14 @@ function M.render(buf, win)
   local start_line = math.max(1, w0 - cfg.viewport_buffer)
   local end_line = math.min(total_lines, w1 + cfg.viewport_buffer)
 
-  -- Clear previous and current viewport ranges to guarantee zero ghost marks
-  local prev = cache.state.rendered and cache.state.rendered[buf] or nil
-  local clear_start = prev and math.min(prev[1], start_line) or start_line
-  local clear_end = prev and math.max(prev[2], end_line) or end_line
+  -- Clear the union of this window's previously painted range and the new one
+  -- to guarantee zero ghost marks. Ranges are tracked per window because the
+  -- same buffer can be visible in several windows at different offsets.
+  local prev_start, prev_end = cache.get_rendered(win, buf)
+  local clear_start = prev_start and math.min(prev_start, start_line) or start_line
+  local clear_end = prev_end and math.max(prev_end, end_line) or end_line
   pcall(nvim_buf_clear_namespace, buf, M.NS, clear_start - 1, clear_end)
-  cache.state.rendered = cache.state.rendered or {}
-  cache.state.rendered[buf] = { start_line, end_line }
+  cache.set_rendered(win, buf, start_line, end_line)
 
   local toprow = start_line - 1
   local botrow = end_line

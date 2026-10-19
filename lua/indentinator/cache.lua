@@ -56,12 +56,49 @@ function M.mark_attached(buf)
   M.buf_attached[buf] = true
 end
 
---- Compatibility state table for backwards compatibility
+--- Compatibility state table for backwards compatibility.
+---
+--- `rendered` is keyed by window and stores `{ buf, start_line, end_line }`.
+--- Viewport ranges are tracked per window because extmarks are buffer-scoped
+--- while the painted lines are chosen per window: sharing one range per buffer
+--- let one window's range overwrite another's and could leave stale marks.
 M.state = {
   cache = M.buf_cache,
   timers = {},
   rendered = {},
 }
+
+--- Records the viewport range most recently painted in a window.
+---@param win integer Window handle
+---@param buf integer Buffer handle
+---@param start_line integer 1-indexed first painted line
+---@param end_line integer 1-indexed last painted line
+function M.set_rendered(win, buf, start_line, end_line)
+  M.state.rendered[win] = { buf = buf, start_line = start_line, end_line = end_line }
+end
+
+--- Returns the previously painted viewport range for a window/buffer pair.
+---@param win integer Window handle
+---@param buf integer Buffer handle
+---@return integer|nil start_line 1-indexed first painted line
+---@return integer|nil end_line 1-indexed last painted line
+function M.get_rendered(win, buf)
+  local entry = M.state.rendered[win]
+  if entry and entry.buf == buf then
+    return entry.start_line, entry.end_line
+  end
+  return nil, nil
+end
+
+--- Drops painted-range bookkeeping for every window showing a buffer.
+---@param buf integer Buffer handle
+function M.clear_rendered_buf(buf)
+  for win, entry in pairs(M.state.rendered) do
+    if entry.buf == buf then
+      M.state.rendered[win] = nil
+    end
+  end
+end
 
 --- Checks whether the cursor is still within the cached scope node bounds
 --- without having entered any nested child scope.
@@ -186,6 +223,7 @@ function M.clear_buf(buf)
     M.buf_dirty = {}
     M.buf_attached = {}
     M.win_cache = {}
+    M.state.rendered = {}
     return
   end
 
@@ -198,12 +236,15 @@ function M.clear_buf(buf)
       M.win_cache[win] = nil
     end
   end
+
+  M.clear_rendered_buf(buf)
 end
 
 --- Cleans tracking state and timer associated with a window.
 ---@param win integer Window handle
 function M.clear_win(win)
   M.win_cache[win] = nil
+  M.state.rendered[win] = nil
   local timer = M.state.timers[win]
   if timer then
     pcall(function()

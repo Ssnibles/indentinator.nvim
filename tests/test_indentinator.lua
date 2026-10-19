@@ -10,6 +10,26 @@ local function assert_eq(actual, expected, msg)
   end
 end
 
+--- Finds the first extmark whose virt_text contains `needle`. Extmark ordering
+--- is an implementation detail (passive guides are batched), so tests look up
+--- marks by content rather than by index.
+---@param marks table[]
+---@param needle string
+---@return table|nil
+local function find_mark_with_text(marks, needle)
+  for _, m in ipairs(marks) do
+    local vt = m[4] and m[4].virt_text
+    if vt then
+      for _, chunk in ipairs(vt) do
+        if type(chunk[1]) == "string" and chunk[1]:find(needle, 1, true) then
+          return m
+        end
+      end
+    end
+  end
+  return nil
+end
+
 print("=== Running Indentinator Expanded Test Suite ===")
 
 -- 1. Test Health Check
@@ -91,18 +111,25 @@ local line3_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 2, 0 }, { 2,
 local line4_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 3, 0 }, { 3, -1 }, { details = true })
 
 assert_eq(#line3_marks > 0, true, "Line 3 (first scope body line) should have extmark")
-assert_eq(line3_marks[1][4].virt_text[1][1], "┌", "Line 3 should render top corner '┌'")
+assert_eq(find_mark_with_text(line3_marks, "┌") ~= nil, true, "Line 3 should render top corner '┌'")
 
 assert_eq(#line4_marks > 0, true, "Line 4 (last scope body line) should have extmark")
-assert_eq(line4_marks[1][4].virt_text[1][1], "└", "Line 4 should render bottom corner '└'")
+assert_eq(find_mark_with_text(line4_marks, "└") ~= nil, true, "Line 4 should render bottom corner '└'")
 print("  ✓ Scope corner boundaries verified successfully.")
 
 -- 5. Test Rainbow Indent Colors
 print("[Test 5] Testing Rainbow Indent Color Extmarks...")
 -- Line 3 has 6 spaces indent -> col 4 is level 2 -> uses IndentinatorRainbow2
 assert_eq(#line3_marks, 2, "Line 3 should have 2 extmarks")
+local rainbow_mark = nil
+for _, m in ipairs(line3_marks) do
+  if m[4].virt_text_win_col == 4 then
+    rainbow_mark = m
+  end
+end
+assert_eq(rainbow_mark ~= nil, true, "Line 3 should have a guide at column 4")
 assert_eq(
-  line3_marks[2][4].virt_text[1][2],
+  rainbow_mark[4].virt_text[1][2],
   "IndentinatorRainbow2",
   "Col 4 normal indent should use IndentinatorRainbow2"
 )
@@ -295,8 +322,10 @@ local marks_a_corner = vim.api.nvim_buf_get_extmarks(
   { details = true }
 )
 assert_eq(#marks_a_corner > 0, true, "Extmarks should exist for line 3")
+local a_corner = find_mark_with_text(marks_a_corner, "┌")
+assert_eq(a_corner ~= nil, true, "Line 3 should render a top corner")
 assert_eq(
-  marks_a_corner[1][4].virt_text[1][2],
+  a_corner[4].virt_text[1][2],
   "IndentinatorRainbow1",
   "Scope line & top corner should use IndentinatorRainbow1 when scope.rainbow=true"
 )
@@ -349,8 +378,10 @@ assert_eq(
   "IndentinatorDelimiter1",
   "Delimiter bracket should use IndentinatorDelimiter1 when delimiters.rainbow=true"
 )
+local b_corner = find_mark_with_text(marks_b_topcorner, "┌")
+assert_eq(b_corner ~= nil, true, "Line 3 should render a top corner")
 assert_eq(
-  marks_b_topcorner[1][4].virt_text[1][2],
+  b_corner[4].virt_text[1][2],
   "IndentinatorScope",
   "Top corner MUST use IndentinatorScope when scope.rainbow=false"
 )

@@ -23,10 +23,8 @@ function M.clear_buf_state(buf)
   if not buf then
     return
   end
+  -- clear_buf already drops the buffer's extmarks bookkeeping and rendered ranges.
   cache.clear_buf(buf)
-  if cache.state.rendered then
-    cache.state.rendered[buf] = nil
-  end
 end
 
 --- Stops and closes the debounce timer for a window.
