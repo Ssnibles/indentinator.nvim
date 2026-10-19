@@ -131,9 +131,10 @@ function M.attach_buffer(buf)
   if cache.is_attached(buf) then
     return
   end
-  cache.mark_attached(buf)
 
-  pcall(api.nvim_buf_attach, buf, false, {
+  -- Only record the buffer as attached once `nvim_buf_attach` actually
+  -- succeeds, otherwise a failed attach would permanently suppress retries.
+  local ok = pcall(api.nvim_buf_attach, buf, false, {
     on_bytes = function(_, bufnr)
       cache.mark_dirty(bufnr)
     end,
@@ -141,6 +142,9 @@ function M.attach_buffer(buf)
       cache.clear_buf(bufnr)
     end,
   })
+  if ok then
+    cache.mark_attached(buf)
+  end
 end
 
 --- Retrieves the Treesitter parser for a buffer.
@@ -695,52 +699,73 @@ function M.resolve_indent_scope(buf, win, custom_row)
   end
 
   local limit = active_col + width
+  local CHUNK = 64
 
-  -- Scan upward for scope start
+  -- Scan upward for scope start. Lines are read in 64-line chunks (walked in
+  -- reverse) rather than one call per line, so the fallback stays cheap on
+  -- large, deeply nested files.
   local scope_start = target_row
   local curr_up = target_row - 1
   while curr_up > 0 do
-    local ok_u, u_lines = pcall(api.nvim_buf_get_lines, buf, curr_up - 1, curr_up, false)
-    if not ok_u or not u_lines or not u_lines[1] then
+    local from = math.max(1, curr_up - CHUNK + 1)
+    local ok_u, u_lines = pcall(api.nvim_buf_get_lines, buf, from - 1, curr_up, false)
+    if not ok_u or not u_lines or #u_lines == 0 then
       break
     end
-    local u_text = u_lines[1]
-    local u_lead = u_text:match("^%s*")
-    if u_text ~= "" and u_lead ~= u_text then
-      local u_disp = utils.lead_display_width(u_lead, tabstop)
-      if u_disp < limit then
-        scope_start = (u_disp == active_col) and curr_up or (curr_up + 1)
-        break
+    local found = false
+    for i = #u_lines, 1, -1 do
+      local row_idx = from + i - 1
+      local u_text = u_lines[i]
+      local u_lead = u_text:match("^%s*")
+      if u_text ~= "" and u_lead ~= u_text then
+        local u_disp = utils.lead_display_width(u_lead, tabstop)
+        if u_disp < limit then
+          scope_start = (u_disp == active_col) and row_idx or (row_idx + 1)
+          found = true
+          break
+        end
       end
+      scope_start = row_idx
     end
-    scope_start = curr_up
-    curr_up = curr_up - 1
+    if found then
+      break
+    end
+    curr_up = from - 1
   end
 
-  -- Scan downward for scope end
+  -- Scan downward for scope end, in 64-line chunks.
   local scope_end = target_row
   local curr_down = target_row + 1
   while curr_down <= line_count do
-    local ok_d, d_lines = pcall(api.nvim_buf_get_lines, buf, curr_down - 1, curr_down, false)
-    if not ok_d or not d_lines or not d_lines[1] then
+    local to = math.min(line_count, curr_down + CHUNK - 1)
+    local ok_d, d_lines = pcall(api.nvim_buf_get_lines, buf, curr_down - 1, to, false)
+    if not ok_d or not d_lines or #d_lines == 0 then
       break
     end
-    local d_text = d_lines[1]
-    local d_lead = d_text:match("^%s*")
-    if d_text ~= "" and d_lead ~= d_text then
-      local d_disp = utils.lead_display_width(d_lead, tabstop)
-      if d_disp < limit then
-        -- Only include line at active_col if it's a closing delimiter
-        if d_disp == active_col and is_closing_delimiter(d_text) then
-          scope_end = curr_down
-        else
-          scope_end = curr_down - 1
+    local found = false
+    for i = 1, #d_lines do
+      local row_idx = curr_down + i - 1
+      local d_text = d_lines[i]
+      local d_lead = d_text:match("^%s*")
+      if d_text ~= "" and d_lead ~= d_text then
+        local d_disp = utils.lead_display_width(d_lead, tabstop)
+        if d_disp < limit then
+          -- Only include line at active_col if it's a closing delimiter
+          if d_disp == active_col and is_closing_delimiter(d_text) then
+            scope_end = row_idx
+          else
+            scope_end = row_idx - 1
+          end
+          found = true
+          break
         end
-        break
       end
+      scope_end = row_idx
     end
-    scope_end = curr_down
-    curr_down = curr_down + 1
+    if found then
+      break
+    end
+    curr_down = to + 1
   end
 
   -- Trim trailing blank lines from scope end
