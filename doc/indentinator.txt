@@ -1,0 +1,236 @@
+*indentinator.txt*  Indentation and scope guides for Neovim
+
+==============================================================================
+CONTENTS                                                    *indentinator-toc*
+
+  1. Introduction ................................ |indentinator-introduction|
+  2. Requirements ................................ |indentinator-requirements|
+  3. Setup ....................................... |indentinator-setup|
+  4. Configuration ............................... |indentinator-config|
+  5. Commands .................................... |indentinator-commands|
+  6. Motions and text objects .................... |indentinator-motions|
+  7. Lua API ..................................... |indentinator-api|
+  8. Per-buffer configuration .................... |indentinator-buffer-config|
+  9. Hooks ....................................... |indentinator-hooks|
+ 10. Highlights .................................. |indentinator-highlights|
+ 11. Health ...................................... |indentinator-health|
+
+==============================================================================
+1. INTRODUCTION                                     *indentinator-introduction*
+
+indentinator.nvim renders standard indentation guides at every indent level,
+highlights the active scope with boundary corners, and provides scope
+navigation motions and text objects. It uses Treesitter for scope resolution
+when available and falls back to indentation scanning otherwise. Only the lines
+visible in the active window (plus |indentinator-config| `viewport_buffer`) are
+painted, using buffer extmarks.
+
+==============================================================================
+2. REQUIREMENTS                                     *indentinator-requirements*
+
+- Neovim 0.10 or newer.
+- A Treesitter parser for the current language is optional. Without one, scope
+  detection falls back to indentation scanning.
+
+==============================================================================
+3. SETUP                                                   *indentinator-setup*
+
+Use your plugin manager and call |indentinator.setup()| with options: >
+
+  require("indentinator").setup({
+    debounce_ms = 10,
+    scope = { corner_style = "round" },
+  })
+<
+Calling `setup()` is optional; the plugin enables itself with defaults on load.
+
+==============================================================================
+4. CONFIGURATION                                       *indentinator-config*
+
+Default values: >
+
+  require("indentinator").setup({
+    enabled = true,
+    debounce_ms = 10,
+    max_file_lines = 10000,
+    viewport_buffer = 30,
+    priority = 100,
+    indent = {
+      enabled = true,
+      show_empty = true,
+      char = "│",
+      hl = "IndentinatorIndent",
+      rainbow = { enabled = false, colors = { ... } },
+    },
+    delimiters = {
+      enabled = true,
+      keywords = true,
+      rainbow = false,
+      bold = false,
+      italic = false,
+      underline = false,
+      hl = nil,
+    },
+    scope = {
+      enabled = true,
+      show_empty = true,
+      rainbow = false,
+      corner_style = "sharp", -- "sharp" | "round" | "double" | "bold"
+      char = "│",
+      char_top = "┌",
+      char_bottom = "└",
+      corners = true,
+      hl = "IndentinatorScope",
+      hl_header = nil,
+      treesitter = true,
+      include = {},
+      exclude = {},
+      languages = {},
+    },
+    exclude = {
+      filetypes = {},
+      buftypes = { "terminal", "nofile", "quickfix", "prompt" },
+    },
+  })
+<
+`include`, `exclude`, and `languages` control which Treesitter node types count
+as scopes. `include` wins over `exclude`, which wins over the built-in
+per-language allow-list, which wins over the generic fallback heuristic.
+
+==============================================================================
+5. COMMANDS                                           *indentinator-commands*
+
+:IndentinatorEnable             Enable guides in the current buffer.
+:IndentinatorDisable            Disable guides in the current buffer.
+:IndentinatorToggle             Toggle guides in the current buffer. Use
+                                `:IndentinatorToggle!` to toggle every active
+                                buffer.
+:IndentinatorIndentToggle       Toggle standard indentation guides.
+:IndentinatorScopeToggle        Toggle the active scope guide.
+:IndentinatorRainbowToggle      Toggle rainbow indent colors.
+:IndentinatorScopeRainbowToggle Toggle rainbow active scope colors.
+:IndentinatorDelimitersToggle   Toggle boundary delimiter highlighting.
+:IndentinatorDelimitersRainbowToggle
+                                Toggle rainbow boundary delimiters.
+:IndentinatorCornersToggle      Toggle boundary corner characters.
+:IndentinatorJumpTop            Jump to the top of the active scope.
+:IndentinatorJumpBottom         Jump to the bottom of the active scope.
+:IndentinatorHealth             Run |checkhealth| for indentinator.
+
+==============================================================================
+6. MOTIONS AND TEXT OBJECTS                         *indentinator-motions*
+
+Define keymaps using the Lua API: >
+
+  local ind = require("indentinator")
+  vim.keymap.set("n", "[s", ind.jump_to_scope_start)
+  vim.keymap.set("n", "]s", ind.jump_to_scope_end)
+  vim.keymap.set({ "x", "o" }, "ii", function() ind.select_scope(true) end)
+  vim.keymap.set({ "x", "o" }, "ai", function() ind.select_scope(false) end)
+<
+
+==============================================================================
+7. LUA API                                                 *indentinator-api*
+
+indentinator.setup({opts})                       *indentinator.setup()*
+        Configures the plugin and registers autocommands. Options are merged
+        onto defaults and replace any previous global configuration.
+
+indentinator.update({opts})                      *indentinator.update()*
+        Merges `opts` into the current global configuration without resetting
+        unspecified values.
+
+indentinator.enable([buf])                     *indentinator.enable()*
+indentinator.disable([buf])                   *indentinator.disable()*
+indentinator.toggle([buf])                     *indentinator.toggle()*
+indentinator.is_enabled([buf])              *indentinator.is_enabled()*
+        Enable, disable, toggle, or query guides for a buffer (defaults to the
+        current buffer). An explicit per-buffer override wins over the global
+        `enabled` switch and filetype/buftype exclusions.
+
+indentinator.get_config([buf])              *indentinator.get_config()*
+        Returns a deep copy of the resolved configuration for a buffer.
+
+indentinator.set_buffer_config({opts}[, buf]) *indentinator.set_buffer_config()*
+        Replaces the per-buffer overrides for `buf`. Pass `nil` to clear.
+
+indentinator.force_update()                 *indentinator.force_update()*
+        Re-renders all active windows and invalidates memoized configuration.
+
+indentinator.get_current_scope([buf[, win]]) *indentinator.get_current_scope()*
+        Returns `{ scope_start, scope_end, active_col }` for the active scope,
+        or `nil`.
+
+indentinator.jump_to_scope_start([win]) *indentinator.jump_to_scope_start()*
+indentinator.jump_to_scope_end([win])     *indentinator.jump_to_scope_end()*
+        Jump to the top/bottom boundary of the active scope, or to the parent
+        scope when already on that boundary. Returns `true` on success.
+
+indentinator.select_scope(inner[, win])   *indentinator.select_scope()*
+        Selects the active scope in visual-line mode. When `inner` is true the
+        header and footer boundary lines are excluded.
+
+indentinator.register_hook(type, fn)     *indentinator.register_hook()*
+indentinator.clear_hooks([type])           *indentinator.clear_hooks()*
+        Register/clear callbacks. See |indentinator-hooks|.
+
+indentinator.hook_types                            *indentinator.hook_types*
+        Table of hook type names (see |indentinator-hooks|).
+
+==============================================================================
+8. PER-BUFFER CONFIGURATION                   *indentinator-buffer-config*
+
+Overrides take precedence over the global configuration and are cleared when
+the buffer is deleted: >
+
+  local ind = require("indentinator")
+  ind.set_buffer_config({ scope = { enabled = false } }, bufnr)
+  local cfg = ind.get_config(bufnr)
+<
+An explicit per-buffer `enabled` override (set through |indentinator.enable()| /
+|indentinator.disable()| or `set_buffer_config`) wins over the global `enabled`
+switch and over filetype/buftype exclusions.
+
+==============================================================================
+9. HOOKS                                                   *indentinator-hooks*
+
+Hooks are wrapped in `pcall`; a failing hook never breaks rendering. >
+
+  local ind = require("indentinator")
+
+  ind.register_hook(ind.hook_types.ACTIVE, function(buf)
+    return vim.b[buf].no_indent_guides ~= true
+  end)
+
+  ind.register_hook(ind.hook_types.SCOPE_ACTIVE, function()
+    return true
+  end)
+
+  ind.register_hook(ind.hook_types.SKIP_LINE, function(_, row, line)
+    return line:match("^%s*$") ~= nil
+  end)
+<
+Hook types: ~
+  `ind.hook_types.ACTIVE(buf) -> boolean`       Return false to skip the buffer.
+  `ind.hook_types.SCOPE_ACTIVE(buf) -> boolean` Return false to hide the active
+                                                scope guide.
+  `ind.hook_types.SKIP_LINE(buf, row, line) -> boolean`
+                                                Return true to skip a line.
+
+==============================================================================
+10. HIGHLIGHTS                                       *indentinator-highlights*
+
+IndentinatorIndent          Standard guide character.
+IndentinatorScope           Active scope guide character.
+IndentinatorDelimiter       Scope boundary delimiter brackets.
+IndentinatorDelimiter1..6   Rainbow boundary delimiter colors.
+IndentinatorRainbow1..6     Rainbow level guide colors.
+
+==============================================================================
+11. HEALTH                                             *indentinator-health*
+
+Run `:checkhealth indentinator` (or |:IndentinatorHealth|) to verify the
+Neovim version, Treesitter availability and parser coverage, and the effective
+configuration.
+
+vim:tw=78:ts=8:noet:ft=help:norl:

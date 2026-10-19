@@ -81,6 +81,8 @@ use {
 - `:IndentinatorJumpBottom` — Jump cursor to bottom boundary of active scope.
 - `:IndentinatorHealth` — Run configuration diagnostics.
 
+See `:help indentinator` (`doc/indentinator.txt`) for the full reference.
+
 ---
 
 ## Scope Navigation & Keymaps
