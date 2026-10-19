@@ -51,12 +51,15 @@ vim.api.nvim_create_user_command(
   { desc = "Toggle indent & scope guides (use ! to toggle across active buffers)", bang = true }
 )
 
+-- The toggles below go through `ind.update()` so `finalize()` re-runs and the
+-- memoized per-buffer resolved configs are invalidated, keeping buffers with
+-- per-buffer overrides in sync with the global switches.
+
 vim.api.nvim_create_user_command(
   "IndentinatorIndentToggle",
   cmd(function()
-    local curr = ind.config.indent.enabled ~= false
-    ind.config.indent.enabled = not curr
-    ind.force_update()
+    local enabled = ind.config.indent.enabled ~= false
+    ind.update({ indent = { enabled = not enabled } })
   end),
   { desc = "Toggle standard indentation guides" }
 )
@@ -64,9 +67,8 @@ vim.api.nvim_create_user_command(
 vim.api.nvim_create_user_command(
   "IndentinatorScopeToggle",
   cmd(function()
-    local curr = ind.config.scope.enabled ~= false
-    ind.config.scope.enabled = not curr
-    ind.force_update()
+    local enabled = ind.config.scope.enabled ~= false
+    ind.update({ scope = { enabled = not enabled } })
   end),
   { desc = "Toggle active scope guide" }
 )
@@ -74,10 +76,8 @@ vim.api.nvim_create_user_command(
 vim.api.nvim_create_user_command(
   "IndentinatorRainbowToggle",
   cmd(function()
-    ind.config.indent.rainbow = ind.config.indent.rainbow or {}
-    local curr = ind.config.indent.rainbow.enabled == true
-    ind.config.indent.rainbow.enabled = not curr
-    ind.force_update()
+    local rainbow = ind.config.indent.rainbow or {}
+    ind.update({ indent = { rainbow = { enabled = rainbow.enabled ~= true } } })
   end),
   { desc = "Toggle rainbow indent guide colors" }
 )
@@ -85,11 +85,37 @@ vim.api.nvim_create_user_command(
 vim.api.nvim_create_user_command(
   "IndentinatorCornersToggle",
   cmd(function()
-    local curr = ind.config.scope.corners ~= false
-    ind.config.scope.corners = not curr
-    ind.force_update()
+    local corners = ind.config.scope.corners ~= false
+    ind.update({ scope = { corners = not corners } })
   end),
   { desc = "Toggle active scope boundary corners" }
+)
+
+vim.api.nvim_create_user_command(
+  "IndentinatorScopeRainbowToggle",
+  cmd(function()
+    local rainbow = ind.config.scope.rainbow == true
+    ind.update({ scope = { rainbow = not rainbow } })
+  end),
+  { desc = "Toggle rainbow active scope line colors" }
+)
+
+vim.api.nvim_create_user_command(
+  "IndentinatorDelimitersToggle",
+  cmd(function()
+    local delimiters = ind.config.delimiters or {}
+    ind.update({ delimiters = { enabled = delimiters.enabled == false } })
+  end),
+  { desc = "Toggle scope boundary delimiter highlighting" }
+)
+
+vim.api.nvim_create_user_command(
+  "IndentinatorDelimitersRainbowToggle",
+  cmd(function()
+    local delimiters = ind.config.delimiters or {}
+    ind.update({ delimiters = { rainbow = delimiters.rainbow ~= true } })
+  end),
+  { desc = "Toggle rainbow scope boundary delimiter colors" }
 )
 
 vim.api.nvim_create_user_command(
@@ -106,37 +132,6 @@ vim.api.nvim_create_user_command(
     ind.jump_to_scope_end()
   end),
   { desc = "Jump cursor to bottom boundary of active scope" }
-)
-
-vim.api.nvim_create_user_command(
-  "IndentinatorScopeRainbowToggle",
-  cmd(function()
-    local curr = ind.config.scope.rainbow == true
-    ind.config.scope.rainbow = not curr
-    ind.force_update()
-  end),
-  { desc = "Toggle rainbow active scope line colors" }
-)
-
-vim.api.nvim_create_user_command(
-  "IndentinatorDelimitersToggle",
-  cmd(function()
-    ind.config.delimiters = ind.config.delimiters or {}
-    ind.config.delimiters.enabled = ind.config.delimiters.enabled == false
-    ind.force_update()
-  end),
-  { desc = "Toggle scope boundary delimiter highlighting" }
-)
-
-vim.api.nvim_create_user_command(
-  "IndentinatorDelimitersRainbowToggle",
-  cmd(function()
-    ind.config.delimiters = ind.config.delimiters or {}
-    local curr = ind.config.delimiters.rainbow == true
-    ind.config.delimiters.rainbow = not curr
-    ind.force_update()
-  end),
-  { desc = "Toggle rainbow scope boundary delimiter colors" }
 )
 
 vim.api.nvim_create_user_command(
