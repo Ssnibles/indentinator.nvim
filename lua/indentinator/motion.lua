@@ -4,6 +4,7 @@ local M = {}
 
 local treesitter = require("indentinator.treesitter")
 local config = require("indentinator.config")
+local utils = require("indentinator.utils")
 
 local api = vim.api
 
@@ -15,6 +16,23 @@ local function resolve_target(win)
   win = win or api.nvim_get_current_win()
   local buf = api.nvim_win_get_buf(win)
   return win, buf
+end
+
+--- Converts a display-column target into a byte column on a 1-indexed line.
+--- Scope resolution reports display columns (tab-expanded), but
+--- `nvim_win_set_cursor` expects byte columns, so this mapping is required for
+--- tab-indented buffers.
+---@param buf integer Buffer handle
+---@param line integer 1-indexed line number
+---@param display_col integer|nil 0-indexed display column
+---@return integer byte_col 0-indexed byte column
+local function resolve_byte_col(buf, line, display_col)
+  if not display_col or display_col <= 0 then
+    return 0
+  end
+  local ok, lines = pcall(api.nvim_buf_get_lines, buf, line - 1, line, false)
+  local text = (ok and lines and lines[1]) or ""
+  return utils.display_to_byte_col(text, display_col, utils.buffer_tabstop(buf))
 end
 
 --- Jumps cursor to the top boundary line of the active scope.
@@ -47,7 +65,8 @@ function M.jump_to_scope_start(win)
 
   -- Record jump position for jump list (<C-o>)
   vim.cmd("normal! m'")
-  pcall(api.nvim_win_set_cursor, target_win, { target_line, target_col })
+  local byte_col = resolve_byte_col(buf, target_line, target_col)
+  pcall(api.nvim_win_set_cursor, target_win, { target_line, byte_col })
   return true
 end
 
@@ -81,7 +100,8 @@ function M.jump_to_scope_end(win)
 
   -- Record jump position for jump list (<C-o>)
   vim.cmd("normal! m'")
-  pcall(api.nvim_win_set_cursor, target_win, { target_line, target_col })
+  local byte_col = resolve_byte_col(buf, target_line, target_col)
+  pcall(api.nvim_win_set_cursor, target_win, { target_line, byte_col })
   return true
 end
 

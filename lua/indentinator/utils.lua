@@ -136,4 +136,31 @@ function M.find_non_blank_down(buf, start_row, line_count, max_depth)
   return nil
 end
 
+--- Maps a display column to the byte offset of the first byte at or after it.
+--- Unlike `lead_display_width`, this is the inverse direction and accounts for
+--- tabs, whose display width differs from their one-byte length. Used when
+--- placing the cursor (which expects a byte column) at a display-column target.
+---@param line string Line text
+---@param display_col integer 0-indexed target display column
+---@param tabstop integer|nil Buffer tabstop (defaults to 8)
+---@return integer byte_col 0-indexed byte offset
+function M.display_to_byte_col(line, display_col, tabstop)
+  if not line or line == "" or not display_col or display_col <= 0 then
+    return 0
+  end
+  tabstop = tabstop or 8
+  local col = 0
+  local i = 1
+  local len = #line
+  while i <= len and col < display_col do
+    if line:byte(i) == 9 then
+      col = col + (tabstop - (col % tabstop))
+    else
+      col = col + 1
+    end
+    i = i + 1
+  end
+  return i - 1
+end
+
 return M
