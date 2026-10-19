@@ -9,7 +9,13 @@ function M.check()
 
   local v = vim.version()
   if v and (v.major > 0 or v.minor >= 10) then
-    vim.health.ok(("Neovim %s supported (0.10+ extmark API & Treesitter ready)"):format(vim.fn.string(v)))
+    vim.health.ok(
+      ("Neovim %d.%d.%d supported (0.10+ extmark API & Treesitter ready)"):format(
+        v.major or 0,
+        v.minor or 0,
+        v.patch or 0
+      )
+    )
   else
     vim.health.error("Neovim 0.10+ required for the extmark API and viewport rendering")
   end
@@ -64,7 +70,22 @@ function M.check()
 
   if scope_cfg.treesitter then
     if vim.treesitter and vim.treesitter.get_parser then
-      vim.health.ok("Treesitter is available for active scope AST query calculation")
+      vim.health.ok("vim.treesitter is available for active scope AST resolution")
+
+      -- Probe the parser for the current buffer's filetype so a missing parser
+      -- is visible before it silently falls back to indentation scanning.
+      local buf = vim.api.nvim_get_current_buf()
+      local ft = vim.api.nvim_get_option_value("filetype", { buf = buf })
+      if not ft or ft == "" then
+        vim.health.info("current buffer has no filetype; skipping parser probe")
+      else
+        local ok_parser = pcall(vim.treesitter.get_parser, buf, ft)
+        if ok_parser then
+          vim.health.ok(("Treesitter parser available for %q"):format(ft))
+        else
+          vim.health.info(("No Treesitter parser for %q; indentation fallback will be used"):format(ft))
+        end
+      end
     else
       vim.health.warn("scope.treesitter option is enabled but vim.treesitter is not available")
     end
