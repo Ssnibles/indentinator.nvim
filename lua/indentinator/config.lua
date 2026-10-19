@@ -338,6 +338,14 @@ function M.clear_buffer(buf)
   M._resolved[buf] = nil
 end
 
+--- Invalidates every memoized per-buffer resolved configuration.
+--- Call this after mutating `M.values` in place (for example from the global
+--- toggle commands) so buffers with overrides re-merge against the new globals
+--- instead of returning a stale cached copy.
+function M.clear_resolved()
+  M._resolved = {}
+end
+
 --- Returns the explicit per-buffer `enabled` override, if any.
 ---@param buf integer Buffer handle
 ---@return boolean|nil

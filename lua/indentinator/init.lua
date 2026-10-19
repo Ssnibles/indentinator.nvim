@@ -257,11 +257,15 @@ function M.set_buffer_config(opts, buf)
   end
 end
 
---- Returns the resolved configuration for a buffer.
+--- Returns a deep copy of the resolved configuration for a buffer.
+---
+--- A copy is returned so callers can freely inspect or mutate it without
+--- silently modifying the live global config (the internal `config.get` shares
+--- the global table for buffers without overrides).
 ---@param buf integer|nil Buffer handle (defaults to current buffer)
 ---@return indentinator.Config
 function M.get_config(buf)
-  return config.get(buf or nvim_get_current_buf())
+  return vim.deepcopy(config.get(buf or nvim_get_current_buf()))
 end
 
 --- Enables scope guide rendering for a buffer.
@@ -302,8 +306,11 @@ function M.is_enabled(buf)
 end
 
 --- Forces an update across active windows.
+--- Invalidates memoized per-buffer config so in-place global mutations are
+--- picked up even by buffers that carry their own overrides.
 function M.force_update()
   cache.clear()
+  config.clear_resolved()
   for_each_active_win(function(win, buf)
     renderer.render(buf, win)
   end)
