@@ -96,13 +96,12 @@ end
 
 ---@class indentinator.WinRenderContext
 ---@field buf integer Buffer handle
----@field win integer Window handle
 ---@field toprow integer 0-indexed top line
----@field botrow integer 0-indexed bottom line
 ---@field indent_width integer Display width of one indent level
 ---@field tabstop integer Buffer tabstop
 ---@field leftcol integer Horizontal scroll offset
 ---@field scope indentinator.ScopeInfo|nil
+---@field lines string[] Viewport line text
 ---@field scope_enabled boolean
 ---@field indent_enabled boolean
 ---@field rainbow_enabled boolean
@@ -187,39 +186,18 @@ end
 ---@param toprow integer 0-indexed top row
 ---@param botrow integer 0-indexed bottom row
 ---@param total_lines integer Total line count in buffer
+---@param leftcol integer Horizontal scroll offset
 ---@return boolean success
-function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
+local function prepare_win_context(win, buf, toprow, botrow, total_lines, leftcol)
   local ctx = WIN_CTX[win]
   if not ctx then
-    ctx = {
-      buf = buf,
-      win = win,
-      toprow = toprow,
-      botrow = botrow,
-      indent_width = 2,
-      tabstop = 8,
-      leftcol = 0,
-      scope = nil,
-      lines = nil,
-      scope_enabled = true,
-      indent_enabled = true,
-      rainbow_enabled = false,
-      delimiters_enabled = false,
-      scope_cfg = {},
-      indent_cfg = {},
-      delims_cfg = {},
-      rainbow_count = 6,
-      priority = 100,
-      widths = {},
-      is_blank = {},
-    }
+    ctx = { widths = {}, is_blank = {} }
     WIN_CTX[win] = ctx
-  else
-    ctx.buf = buf
-    ctx.win = win
-    ctx.toprow = toprow
-    ctx.botrow = botrow
   end
+
+  ctx.buf = buf
+  ctx.toprow = toprow
+  ctx.leftcol = leftcol
 
   local cfg = config.get(buf)
   local indent_cfg = cfg.indent or {}
@@ -239,37 +217,11 @@ function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
   ctx.tabstop = utils.buffer_tabstop(buf)
 
   local rainbow_colors = rainbow_cfg.colors or config.defaults.indent.rainbow.colors
-  ctx.rainbow_count = #rainbow_colors
+  ctx.rainbow_count = math.max(1, #rainbow_colors)
 
-  -- Retrieve leftcol horizontal scrolling offset
-  local ok_v, view = pcall(function()
-    return api.nvim_win_call(win, function()
-      return vim.fn.winsaveview().leftcol or 0
-    end)
-  end)
-  ctx.leftcol = (ok_v and type(view) == "number" and view >= 0) and view or 0
-
-  -- Resolve active scope for current cursor position
   if ctx.scope_enabled and hooks.is_scope_active(buf) then
     local cursor = api.nvim_win_get_cursor(win)
-    if cache.is_cursor_in_scope(win, buf, cursor[1], cursor[2]) then
-      ctx.scope = cache.get_win_scope(win, buf)
-    else
-      local s = nil
-      if scope_cfg.treesitter ~= false then
-        s = treesitter.resolve_treesitter_scope(buf, win, cursor[1], cursor[2])
-      end
-      if not s then
-        s = treesitter.resolve_indent_scope(buf, win, cursor[1])
-      end
-      if s then
-        cache.set_win_scope(win, buf, s)
-        ctx.scope = s
-      else
-        cache.set_win_scope(win, buf, nil)
-        ctx.scope = nil
-      end
-    end
+    ctx.scope = treesitter.get_scope_info(buf, win, cursor[1], cursor[2], scope_cfg.treesitter)
   else
     ctx.scope = nil
   end
@@ -339,11 +291,67 @@ function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
   return true
 end
 
+--- Chooses the guide character and highlight for one indentation column.
+---@param ctx indentinator.WinRenderContext
+---@param col integer 0-indexed display column
+---@param line integer 1-indexed line number
+---@param is_blank boolean Whether the line contains only whitespace
+---@param in_scope_range boolean Whether the line is inside the active scope
+---@return string|nil char
+---@return string|nil hl
+---@return boolean active
+---@return "top"|"bottom"|nil corner
+local function guide_style(ctx, col, line, is_blank, in_scope_range)
+  local scope = ctx.scope
+
+  if in_scope_range and scope and scope.active_col == col then
+    if is_blank and ctx.scope_cfg.show_empty == false then
+      return nil, nil, false, nil
+    end
+
+    local char = ctx.scope_cfg.char or "│"
+    local corner = nil
+    local first, last = scope.first_body_line, scope.last_body_line
+    if ctx.scope_cfg.corners and first and last and first < last then
+      if line == first and ctx.scope_cfg.char_top and ctx.scope_cfg.char_top ~= "" then
+        char = ctx.scope_cfg.char_top
+        corner = "top"
+      elseif line == last and ctx.scope_cfg.char_bottom and ctx.scope_cfg.char_bottom ~= "" then
+        char = ctx.scope_cfg.char_bottom
+        corner = "bottom"
+      end
+    end
+
+    local level = math.max(1, math.floor(col / ctx.indent_width))
+    local hl
+    if ctx.scope_cfg.rainbow then
+      hl = "IndentinatorRainbow" .. ((level - 1) % ctx.rainbow_count + 1)
+    else
+      hl = ctx.scope_cfg.hl or "IndentinatorScope"
+    end
+    return char, hl, true, corner
+  end
+
+  if not ctx.indent_enabled or (is_blank and ctx.indent_cfg.show_empty == false) then
+    return nil, nil, false, nil
+  end
+
+  local char = ctx.indent_cfg.char or "│"
+  local hl
+  if ctx.rainbow_enabled then
+    local level = math.max(1, math.floor(col / ctx.indent_width))
+    hl = "IndentinatorRainbow" .. ((level - 1) % ctx.rainbow_count + 1)
+  else
+    hl = ctx.indent_cfg.hl or "IndentinatorIndent"
+  end
+  return char, hl, false, nil
+end
+
 --- Renders a single line's indent and scope guides.
 ---@param buf integer Buffer handle
 ---@param win integer Window handle
 ---@param row integer 0-indexed line row
-function M.render_line(buf, win, row)
+local function render_line(buf, win, row)
   local ctx = WIN_CTX[win]
   if not ctx or ctx.buf ~= buf then
     return
@@ -416,45 +424,7 @@ function M.render_line(buf, win, row)
     for col = width, max_col, width do
       local win_col = col - ctx.leftcol
       if win_col >= 0 then
-        local is_active = in_scope_range and active_col and (col == active_col)
-        local char, hl, active_guide = nil, nil, false
-
-        if is_active and ctx.scope_enabled then
-          if not is_blank or ctx.scope_cfg.show_empty ~= false then
-            char = ctx.scope_cfg.char or "│"
-            local has_corners = ctx.scope_cfg.corners and scope.first_body_line and scope.last_body_line
-            if has_corners and scope.first_body_line < scope.last_body_line then
-              if line_1based == scope.first_body_line and ctx.scope_cfg.char_top and ctx.scope_cfg.char_top ~= "" then
-                char = ctx.scope_cfg.char_top
-              elseif
-                line_1based == scope.last_body_line
-                and ctx.scope_cfg.char_bottom
-                and ctx.scope_cfg.char_bottom ~= ""
-              then
-                char = ctx.scope_cfg.char_bottom
-              end
-            end
-
-            local level = math.max(1, math.floor(col / width))
-            local r_idx = (level - 1) % ctx.rainbow_count + 1
-            local rainbow_hl = "IndentinatorRainbow" .. r_idx
-
-            hl = ctx.scope_cfg.rainbow and rainbow_hl or (ctx.scope_cfg.hl or "IndentinatorScope")
-            active_guide = true
-          end
-        elseif ctx.indent_enabled then
-          if not is_blank or ctx.indent_cfg.show_empty ~= false then
-            char = ctx.indent_cfg.char or "│"
-            if ctx.rainbow_enabled then
-              local level = math.max(1, math.floor(col / width))
-              local r_idx = (level - 1) % ctx.rainbow_count + 1
-              hl = "IndentinatorRainbow" .. r_idx
-            else
-              hl = ctx.indent_cfg.hl or "IndentinatorIndent"
-            end
-          end
-        end
-
+        local char, hl, active_guide = guide_style(ctx, col, line_1based, is_blank, in_scope_range)
         if char and hl then
           if active_guide then
             active_win_col, active_char, active_hl = win_col, char, hl
@@ -530,14 +500,15 @@ function M.render(buf, win)
 
   local ok_v, view = pcall(function()
     return api.nvim_win_call(win, function()
-      return { vim.fn.line("w0"), vim.fn.line("w$") }
+      local saved = vim.fn.winsaveview()
+      return { vim.fn.line("w0"), vim.fn.line("w$"), saved.leftcol or 0 }
     end)
   end)
   if not ok_v or type(view) ~= "table" then
     return
   end
 
-  local w0, w1 = view[1], view[2]
+  local w0, w1, leftcol = view[1], view[2], view[3]
   if type(w0) ~= "number" or type(w1) ~= "number" or w1 < w0 or w0 <= 0 then
     return
   end
@@ -556,13 +527,13 @@ function M.render(buf, win)
 
   local toprow = start_line - 1
   local botrow = end_line
-  local ok_prep = M.prepare_win_context(win, buf, toprow, botrow, total_lines)
+  local ok_prep = prepare_win_context(win, buf, toprow, botrow, total_lines, leftcol or 0)
   if not ok_prep then
     return
   end
 
   for line = start_line, end_line do
-    M.render_line(buf, win, line - 1)
+    render_line(buf, win, line - 1)
   end
 end
 
