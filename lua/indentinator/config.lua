@@ -150,19 +150,25 @@ local function to_set(list)
   return set
 end
 
+--- Returns a numeric value, or the fallback when invalid or below `min`.
+---@param value any
+---@param fallback number
+---@param min number
+---@return number
+local function number_or(value, fallback, min)
+  if type(value) ~= "number" or value < min then
+    return fallback
+  end
+  return value
+end
+
 --- Coerces numeric fields and builds all derived lookup sets on a config table.
 ---@param cfg indentinator.Config
 ---@return indentinator.Config
 local function finalize(cfg)
-  if type(cfg.debounce_ms) ~= "number" or cfg.debounce_ms < 0 then
-    cfg.debounce_ms = M.defaults.debounce_ms
-  end
-  if type(cfg.max_file_lines) ~= "number" or cfg.max_file_lines <= 0 then
-    cfg.max_file_lines = M.defaults.max_file_lines
-  end
-  if type(cfg.viewport_buffer) ~= "number" or cfg.viewport_buffer < 0 then
-    cfg.viewport_buffer = M.defaults.viewport_buffer
-  end
+  cfg.debounce_ms = number_or(cfg.debounce_ms, M.defaults.debounce_ms, 0)
+  cfg.max_file_lines = number_or(cfg.max_file_lines, M.defaults.max_file_lines, 1)
+  cfg.viewport_buffer = number_or(cfg.viewport_buffer, M.defaults.viewport_buffer, 0)
   if type(cfg.priority) ~= "number" then
     cfg.priority = M.defaults.priority
   end
@@ -357,6 +363,16 @@ function M.get_enabled_override(buf)
   return nil
 end
 
+--- Checks whether a buffer option value is in an exclusion set.
+---@param buf integer Buffer handle
+---@param opt string Option name
+---@param excluded table<string, boolean>
+---@return boolean
+local function option_is_excluded(buf, opt, excluded)
+  local ok, value = pcall(api.nvim_get_option_value, opt, { buf = buf })
+  return ok and type(value) == "string" and value ~= "" and excluded[value] == true
+end
+
 --- Checks if plugin features are enabled for a given buffer.
 ---
 --- Precedence: an explicit per-buffer `enabled` override (set via the public
@@ -379,13 +395,10 @@ function M.is_enabled(buf)
     return false
   end
 
-  local ok_bt, bt = pcall(api.nvim_get_option_value, "buftype", { buf = buf })
-  if ok_bt and type(bt) == "string" and bt ~= "" and cfg._exclude_buftypes_set[bt] then
-    return false
-  end
-
-  local ok_ft, ft = pcall(api.nvim_get_option_value, "filetype", { buf = buf })
-  if ok_ft and type(ft) == "string" and ft ~= "" and cfg._exclude_filetypes_set[ft] then
+  if
+    option_is_excluded(buf, "buftype", cfg._exclude_buftypes_set)
+    or option_is_excluded(buf, "filetype", cfg._exclude_filetypes_set)
+  then
     return false
   end
 

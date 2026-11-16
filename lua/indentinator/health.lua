@@ -8,7 +8,7 @@ function M.check()
   vim.health.start("indentinator")
 
   local v = vim.version()
-  if v and (v.major > 0 or v.minor >= 10) then
+  if vim.fn.has("nvim-0.10") == 1 then
     vim.health.ok(
       ("Neovim %d.%d.%d supported (0.10+ extmark API & Treesitter ready)"):format(
         v.major or 0,
