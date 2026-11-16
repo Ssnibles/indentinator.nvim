@@ -1,9 +1,10 @@
---- Utility functions for indentinator.nvim.
---- Handles buffer indentation calculations and leading whitespace display width.
+--- Buffer indentation, whitespace width, and line-scanning helpers.
+---@class indentinator.utils
+local M = {}
 
 local api = vim.api
 
-local M = {}
+local SCAN_CHUNK = 64
 
 --- Safely retrieves a positive numeric option value from a buffer.
 ---@param buf integer Buffer handle
@@ -24,11 +25,7 @@ end
 ---@param buf integer Buffer handle
 ---@return integer Indentation width in display columns
 function M.indent_width(buf)
-  local sw = M.get_buf_opt(buf, "shiftwidth")
-  if sw and sw > 0 then
-    return sw
-  end
-  return M.get_buf_opt(buf, "tabstop") or 2
+  return M.get_buf_opt(buf, "shiftwidth") or M.get_buf_opt(buf, "tabstop") or 2
 end
 
 --- Retrieves the tabstop size setting of a buffer.
@@ -38,7 +35,7 @@ function M.buffer_tabstop(buf)
   return M.get_buf_opt(buf, "tabstop") or 8
 end
 
---- Computes visual display column width of leading whitespace string.
+--- Computes visual display column width of leading whitespace.
 --- Fast path for space-only indent; handles tab expansion for tabs.
 ---@param lead string Leading whitespace substring
 ---@param tabstop integer Buffer tabstop setting
@@ -63,7 +60,50 @@ function M.lead_display_width(lead, tabstop)
   return display_col
 end
 
---- Scans upwards from start_row to find nearest non-blank line.
+--- Scans in chunks for the nearest non-blank line in one direction.
+--- Chunking keeps the scan cheap on large files without one API call per line.
+---@param buf integer Buffer handle
+---@param start_row integer 1-indexed starting row
+---@param first_row integer 1-indexed lowest row to visit
+---@param last_row integer 1-indexed highest row to visit
+---@param step integer 1 to scan down, -1 to scan up
+---@return string|nil text Line text
+---@return string|nil lead Leading whitespace string
+---@return integer|nil row Line row index (1-indexed)
+local function find_non_blank(buf, start_row, first_row, last_row, step)
+  local current = start_row
+  while current >= first_row and current <= last_row do
+    local chunk_first, chunk_last
+    if step > 0 then
+      chunk_first = current
+      chunk_last = math.min(last_row, current + SCAN_CHUNK - 1)
+    else
+      chunk_first = math.max(first_row, current - SCAN_CHUNK + 1)
+      chunk_last = current
+    end
+
+    local ok, lines = pcall(api.nvim_buf_get_lines, buf, chunk_first - 1, chunk_last, false)
+    if not ok or #lines == 0 then
+      break
+    end
+
+    local from, to, delta = 1, #lines, 1
+    if step < 0 then
+      from, to, delta = #lines, 1, -1
+    end
+    for i = from, to, delta do
+      local text = lines[i]
+      local lead = text:match("^%s*")
+      if text ~= "" and lead ~= text then
+        return text, lead, chunk_first + i - 1
+      end
+    end
+
+    current = step > 0 and (chunk_last + 1) or (chunk_first - 1)
+  end
+end
+
+--- Scans upwards from start_row to find the nearest non-blank line.
 ---@param buf integer Buffer handle
 ---@param start_row integer Starting line row (1-indexed)
 ---@param max_depth integer|nil Maximum lines to search upward
@@ -74,32 +114,11 @@ function M.find_non_blank_up(buf, start_row, max_depth)
   if not buf or not api.nvim_buf_is_valid(buf) or start_row < 1 then
     return nil
   end
-
   max_depth = max_depth or 1000
-  local min_allowed = math.max(1, start_row - max_depth)
-  local current = start_row
-
-  while current >= min_allowed do
-    local chunk_start = math.max(min_allowed, current - 64 + 1)
-    local ok, lines = pcall(api.nvim_buf_get_lines, buf, chunk_start - 1, current, false)
-    if not ok or #lines == 0 then
-      break
-    end
-
-    for i = #lines, 1, -1 do
-      local text = lines[i]
-      local lead = text:match("^%s*")
-      if text ~= "" and lead ~= text then
-        return text, lead, chunk_start + i - 1
-      end
-    end
-    current = chunk_start - 1
-  end
-
-  return nil
+  return find_non_blank(buf, start_row, math.max(1, start_row - max_depth), start_row, -1)
 end
 
---- Scans downwards from start_row to find nearest non-blank line.
+--- Scans downwards from start_row to find the nearest non-blank line.
 ---@param buf integer Buffer handle
 ---@param start_row integer Starting line row (1-indexed)
 ---@param line_count integer Total line count in buffer
@@ -111,29 +130,8 @@ function M.find_non_blank_down(buf, start_row, line_count, max_depth)
   if not buf or not api.nvim_buf_is_valid(buf) or start_row > line_count then
     return nil
   end
-
   max_depth = max_depth or 1000
-  local max_allowed = math.min(line_count, start_row + max_depth)
-  local current = start_row
-
-  while current <= max_allowed do
-    local chunk_end = math.min(max_allowed, current + 64 - 1)
-    local ok, lines = pcall(api.nvim_buf_get_lines, buf, current - 1, chunk_end, false)
-    if not ok or #lines == 0 then
-      break
-    end
-
-    for i = 1, #lines do
-      local text = lines[i]
-      local lead = text:match("^%s*")
-      if text ~= "" and lead ~= text then
-        return text, lead, current + i - 1
-      end
-    end
-    current = chunk_end + 1
-  end
-
-  return nil
+  return find_non_blank(buf, start_row, start_row, math.min(line_count, start_row + max_depth), 1)
 end
 
 --- Maps a display column to the byte offset of the first byte at or after it.

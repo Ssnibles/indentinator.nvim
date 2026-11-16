@@ -26,6 +26,7 @@ local function language_for_range(lang_tree, s_row, s_col, e_row, e_col)
     return lang_tree:children()
   end)
   if ok_children and children then
+    -- `children()` returns a table keyed by language, so pairs is required.
     for _, child in pairs(children) do
       local ok_contains, contains = pcall(function()
         return child:contains(range)
@@ -336,7 +337,7 @@ end
 ---@param keywords_enabled boolean
 ---@param lang_tree vim.treesitter.LanguageTree|nil Language tree for the scope (injection-aware)
 ---@return table[] delimiter_spans Array of { row, s_col, e_col }
-function M.get_boundary_delimiters(buf, scope_node, s_row, e_row, keywords_enabled, lang_tree)
+local function get_boundary_delimiters(buf, scope_node, s_row, e_row, keywords_enabled, lang_tree)
   local spans = {}
   local boundary_rows = { s_row, e_row }
 
@@ -456,7 +457,7 @@ end
 ---@param tabstop integer Buffer tabstop
 ---@return integer|nil first_scope_line
 ---@return integer|nil last_scope_line
-function M.find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
+local function find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
   if scope_start >= scope_end then
     return nil, nil
   end
@@ -606,9 +607,8 @@ function M.resolve_treesitter_scope(buf, _win, cursor_row, cursor_col, start_nod
   end
 
   local child_ranges = collect_child_scope_ranges(scope_node, lang, cfg)
-  local first_body_line, last_body_line =
-    M.find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
-  local delims = M.get_boundary_delimiters(buf, scope_node, s_row, e_row, true, lang_tree)
+  local first_body_line, last_body_line = find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
+  local delims = get_boundary_delimiters(buf, scope_node, s_row, e_row, true, lang_tree)
 
   ---@type indentinator.ScopeInfo
   return {
@@ -778,8 +778,7 @@ function M.resolve_indent_scope(buf, win, custom_row)
     end
   end
 
-  local first_body_line, last_body_line =
-    M.find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
+  local first_body_line, last_body_line = find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
 
   return {
     scope_start = scope_start,
@@ -849,6 +848,34 @@ function M.get_parent_scope(buf, win, current_scope_start, current_node, use_tre
   return nil, nil, nil, nil
 end
 
+--- Resolves the active scope for a cursor position, using Treesitter with an
+--- indentation fallback, and memoizes the result per window.
+---@param buf integer Buffer handle
+---@param win integer Window handle
+---@param cursor_row integer 1-indexed cursor row
+---@param cursor_col integer 0-indexed cursor column
+---@param use_treesitter boolean|nil Whether Treesitter scope is enabled
+---@return indentinator.ScopeInfo|nil
+function M.get_scope_info(buf, win, cursor_row, cursor_col, use_treesitter)
+  if cache.is_cursor_in_scope(win, buf, cursor_row, cursor_col) then
+    local cached = cache.get_win_scope(win, buf)
+    if cached then
+      return cached
+    end
+  end
+
+  local scope = nil
+  if use_treesitter ~= false then
+    scope = M.resolve_treesitter_scope(buf, win, cursor_row, cursor_col)
+  end
+  if not scope then
+    scope = M.resolve_indent_scope(buf, win, cursor_row)
+  end
+
+  cache.set_win_scope(win, buf, scope)
+  return scope
+end
+
 --- Primary scope resolution dispatcher with memoization caching.
 ---@param buf integer Buffer handle
 ---@param win integer Window handle
@@ -867,65 +894,11 @@ function M.get_scope(buf, win, use_treesitter)
     return nil, nil, nil, nil
   end
 
-  local cursor_row = cursor[1]
-  local cursor_col = cursor[2]
-
-  -- Fast path: if cursor is still within active scope node bounds, return cached scope
-  if cache.is_cursor_in_scope(win, buf, cursor_row, cursor_col) then
-    local cached = cache.get_win_scope(win, buf)
-    if cached then
-      return cached.scope_start, cached.scope_end, cached.active_col, cached.node
-    end
-  end
-
-  local scope = nil
-  if use_treesitter ~= false then
-    scope = M.resolve_treesitter_scope(buf, win, cursor_row, cursor_col)
-  end
-
-  if not scope then
-    scope = M.resolve_indent_scope(buf, win, cursor_row)
-  end
-
+  local scope = M.get_scope_info(buf, win, cursor[1], cursor[2], use_treesitter)
   if scope and scope.scope_start and scope.scope_end and scope.active_col >= 0 then
-    cache.set_win_scope(win, buf, scope)
-    return scope.scope_start, scope.scope_end, scope.active_col, scope.node
-  end
-
-  cache.set_win_scope(win, buf, nil)
-  return nil, nil, nil, nil
-end
-
---- Backward compatibility helper matching legacy scope.lua signature.
----@param buf integer Buffer handle
----@param win integer Window handle
----@param start_node userdata|nil
----@return integer|nil scope_start
----@return integer|nil scope_end
----@return integer|nil active_col
----@return userdata|nil scope_node
-function M.get_treesitter_scope(buf, win, start_node)
-  local cursor = api.nvim_win_get_cursor(win)
-  local scope = M.resolve_treesitter_scope(buf, win, cursor[1], cursor[2], start_node)
-  if scope then
     return scope.scope_start, scope.scope_end, scope.active_col, scope.node
   end
   return nil, nil, nil, nil
-end
-
---- Backward compatibility helper matching legacy scope.lua signature.
----@param buf integer Buffer handle
----@param win integer Window handle
----@param custom_row integer|nil
----@return integer|nil scope_start
----@return integer|nil scope_end
----@return integer|nil active_col
-function M.get_indent_scope(buf, win, custom_row)
-  local scope = M.resolve_indent_scope(buf, win, custom_row)
-  if scope then
-    return scope.scope_start, scope.scope_end, scope.active_col
-  end
-  return nil, nil, nil
 end
 
 return M
