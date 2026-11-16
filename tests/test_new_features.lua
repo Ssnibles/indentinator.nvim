@@ -1,15 +1,10 @@
 -- Tests for per-buffer config, data-driven scope node overrides,
 -- viewport_buffer rendering, and OptionSet re-rendering.
--- Run via:
--- nvim --headless -u NONE -c "set rtp+=." -c "luafile tests/test_new_features.lua" -c "q"
+-- Run via tests/run.sh.
 
-local function assert_eq(actual, expected, msg)
-  if actual ~= expected then
-    error(
-      string.format("%s: expected %s, got %s", msg or "Assertion failed", vim.inspect(expected), vim.inspect(actual))
-    )
-  end
-end
+local helpers = dofile("tests/helpers.lua")
+local assert_eq = helpers.assert_eq
+local make_buf = helpers.make_buf
 
 print("=== Running Indentinator New Feature Tests ===")
 
@@ -18,20 +13,6 @@ local render = require("indentinator.render")
 local config = require("indentinator.config")
 
 local win = vim.api.nvim_get_current_win()
-
----@param lines string[]
----@return integer
-local function make_buf(lines, filetype)
-  -- Listed, non-scratch buffer so buftype exclusions do not interfere.
-  local buf = vim.api.nvim_create_buf(true, false)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.api.nvim_set_option_value("shiftwidth", 2, { buf = buf })
-  vim.api.nvim_set_option_value("tabstop", 2, { buf = buf })
-  if filetype then
-    vim.api.nvim_set_option_value("filetype", filetype, { buf = buf })
-  end
-  return buf
-end
 
 -- 1. Per-buffer configuration overrides
 print("[Test 1] Testing Per-Buffer Configuration Overrides...")

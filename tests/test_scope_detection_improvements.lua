@@ -1,14 +1,8 @@
 -- Test suite for scope detection precision and stability improvements
--- Run via:
--- nvim --headless -u NONE -c "set rtp+=." -c "luafile tests/test_scope_detection_improvements.lua" -c "q"
+-- Run via tests/run.sh.
 
-local function assert_eq(actual, expected, msg)
-  if actual ~= expected then
-    error(
-      string.format("%s: expected %s, got %s", msg or "Assertion failed", vim.inspect(expected), vim.inspect(actual))
-    )
-  end
-end
+local helpers = dofile("tests/helpers.lua")
+local assert_eq = helpers.assert_eq
 
 print("=== Running Indentinator Scope Detection Precision Tests ===")
 

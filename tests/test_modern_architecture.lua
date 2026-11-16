@@ -2,13 +2,8 @@
 -- Verifies viewport-scoped extmark rendering and clearing, scope node boundary
 -- caching, and low-latency cursor tracking.
 
-local function assert_eq(actual, expected, msg)
-  if actual ~= expected then
-    error(
-      string.format("%s: expected %s, got %s", msg or "Assertion failed", vim.inspect(expected), vim.inspect(actual))
-    )
-  end
-end
+local helpers = dofile("tests/helpers.lua")
+local assert_eq = helpers.assert_eq
 
 print("=== Running Modern Indentinator Architecture Tests ===")
 

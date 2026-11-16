@@ -2,13 +2,9 @@
 -- and test-runner fixes.
 -- Run via tests/run.sh (which uses `nvim -l` so failures exit non-zero).
 
-local function assert_eq(actual, expected, msg)
-  if actual ~= expected then
-    error(
-      string.format("%s: expected %s, got %s", msg or "Assertion failed", vim.inspect(expected), vim.inspect(actual))
-    )
-  end
-end
+local helpers = dofile("tests/helpers.lua")
+local assert_eq = helpers.assert_eq
+local make_buf = helpers.make_buf
 
 print("=== Running Indentinator Regression Tests ===")
 
@@ -19,23 +15,6 @@ local cache = require("indentinator.cache")
 local treesitter = require("indentinator.treesitter")
 
 local win = vim.api.nvim_get_current_win()
-
----@param lines string[]
----@param filetype string|nil
----@param opts table|nil
----@return integer
-local function make_buf(lines, filetype, opts)
-  opts = opts or {}
-  local buf = vim.api.nvim_create_buf(true, false)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.api.nvim_set_option_value("shiftwidth", opts.shiftwidth or 2, { buf = buf })
-  vim.api.nvim_set_option_value("tabstop", opts.tabstop or 2, { buf = buf })
-  vim.api.nvim_set_option_value("expandtab", opts.expandtab ~= false, { buf = buf })
-  if filetype then
-    vim.api.nvim_set_option_value("filetype", filetype, { buf = buf })
-  end
-  return buf
-end
 
 -- 1. Global toggle commands must reach buffers that hold per-buffer overrides.
 -- Regression: config.get() memoized the merged config and force_update() did not
@@ -58,11 +37,7 @@ assert_eq(#vim.api.nvim_buf_get_extmarks(buf, render.NS, 0, -1, {}), 0, "no inde
 ind.config.indent.enabled = true
 ind.force_update()
 assert_eq(config.get(buf).indent.enabled, true, "toggling back must take effect")
-assert_eq(
-  #vim.api.nvim_buf_get_extmarks(buf, render.NS, 0, -1, {}) > 0,
-  true,
-  "indent guides should be restored"
-)
+assert_eq(#vim.api.nvim_buf_get_extmarks(buf, render.NS, 0, -1, {}) > 0, true, "indent guides should be restored")
 
 -- The public update() path must propagate too.
 ind.update({ indent = { enabled = false } })

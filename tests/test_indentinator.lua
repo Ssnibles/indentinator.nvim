@@ -1,34 +1,9 @@
 -- Test suite for indentinator.nvim (scope corners, rainbow indent, debounced rendering)
--- Run via:
--- nvim --headless -u NONE -c "set rtp+=." -c "luafile tests/test_indentinator.lua" -c "q"
+-- Run via tests/run.sh.
 
-local function assert_eq(actual, expected, msg)
-  if actual ~= expected then
-    error(
-      string.format("%s: expected %s, got %s", msg or "Assertion failed", vim.inspect(expected), vim.inspect(actual))
-    )
-  end
-end
-
---- Finds the first extmark whose virt_text contains `needle`. Extmark ordering
---- is an implementation detail (passive guides are batched), so tests look up
---- marks by content rather than by index.
----@param marks table[]
----@param needle string
----@return table|nil
-local function find_mark_with_text(marks, needle)
-  for _, m in ipairs(marks) do
-    local vt = m[4] and m[4].virt_text
-    if vt then
-      for _, chunk in ipairs(vt) do
-        if type(chunk[1]) == "string" and chunk[1]:find(needle, 1, true) then
-          return m
-        end
-      end
-    end
-  end
-  return nil
-end
+local helpers = dofile("tests/helpers.lua")
+local assert_eq = helpers.assert_eq
+local find_mark_with_text = helpers.find_mark_with_text
 
 print("=== Running Indentinator Expanded Test Suite ===")
 
