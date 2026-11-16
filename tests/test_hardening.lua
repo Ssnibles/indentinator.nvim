@@ -204,4 +204,48 @@ assert_eq(#notified > 0, true, "a failed extmark must be reported via vim.notify
 pcall(vim.api.nvim_buf_delete, err_buf, { force = true })
 print("  ✓ Extmark failure reporting verified.")
 
+-- 8. The scope start line keeps the normal indent highlight, not the scope colour.
+print("[Test 8] Scope start line keeps the normal indent highlight...")
+ind.setup({
+  debounce_ms = 0,
+  viewport_buffer = 0,
+  indent = { enabled = true },
+  scope = { enabled = true, corners = true },
+})
+local edge_buf = make_buf({
+  "function outer()",
+  "    if true then",
+  "        local x = 1",
+  "    end",
+  "end",
+})
+vim.api.nvim_win_set_buf(win, edge_buf)
+vim.api.nvim_win_set_cursor(win, { 3, 8 })
+ind.enable(edge_buf)
+-- Synthetic scope: the start line is deeper than the active guide column, which
+-- used to paint a scope-coloured spur above the top corner.
+cache.set_win_scope(win, edge_buf, {
+  scope_start = 2,
+  scope_end = 4,
+  active_col = 2,
+  s_row = 1,
+  e_row = 3,
+  child_ranges = {},
+  first_body_line = 3,
+  last_body_line = 3,
+  delimiter_spans = {},
+})
+render.render(edge_buf, win)
+local header_marks = vim.api.nvim_buf_get_extmarks(edge_buf, render.NS, { 1, 0 }, { 1, -1 }, { details = true })
+local header_style = nil
+for _, mark in ipairs(header_marks) do
+  local virt_text = mark[4].virt_text
+  if virt_text and virt_text[1] and virt_text[1][1] == "│" then
+    header_style = virt_text[1][2]
+  end
+end
+assert_eq(header_style, "IndentinatorIndent", "scope start line must use the normal indent highlight")
+pcall(vim.api.nvim_buf_delete, edge_buf, { force = true })
+print("  ✓ Scope start line highlight verified.")
+
 print("=== All Hardening Tests Passed Successfully! ===")

@@ -304,7 +304,7 @@ end
 local function guide_style(ctx, col, line, is_blank, in_scope_range)
   local scope = ctx.scope
 
-  if in_scope_range and scope and scope.active_col == col then
+  if in_scope_range and scope and scope.active_col == col and line ~= scope.scope_start then
     if is_blank and ctx.scope_cfg.show_empty == false then
       return nil, nil, false, nil
     end
