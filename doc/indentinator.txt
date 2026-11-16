@@ -79,6 +79,7 @@ Default values: >
       char = "│",
       char_top = "┌",
       char_bottom = "└",
+      char_horizontal = "─",
       corners = true,
       hl = "IndentinatorScope",
       hl_header = nil,

@@ -29,6 +29,7 @@ local api = vim.api
 ---@field char string Active scope delimiter character
 ---@field char_top string Top boundary corner character
 ---@field char_bottom string Bottom boundary corner character
+---@field char_horizontal string Horizontal arm used by top/bottom corners
 ---@field corners boolean Whether to render corner delimiters at scope boundaries
 ---@field hl string Highlight group name for active scope guide
 ---@field hl_header string|nil Optional highlight group for scope header line
@@ -63,10 +64,10 @@ local api = vim.api
 
 --- Boundary corner character presets mapping
 M.CORNER_PRESETS = {
-  sharp = { char_top = "┌", char_bottom = "└" },
-  round = { char_top = "╭", char_bottom = "╰" },
-  double = { char_top = "╔", char_bottom = "╚" },
-  bold = { char_top = "┏", char_bottom = "┗" },
+  sharp = { char_top = "┌", char_bottom = "└", char_horizontal = "─" },
+  round = { char_top = "╭", char_bottom = "╰", char_horizontal = "─" },
+  double = { char_top = "╔", char_bottom = "╚", char_horizontal = "═" },
+  bold = { char_top = "┏", char_bottom = "┗", char_horizontal = "━" },
 }
 
 --- Default plugin configuration values.
@@ -110,6 +111,7 @@ M.defaults = {
     char = "│",
     char_top = "┌",
     char_bottom = "└",
+    char_horizontal = "─",
     corners = true,
     hl = "IndentinatorScope",
     hl_header = nil,
@@ -221,6 +223,9 @@ local function normalise(opts)
     end
     if scope_opt.char_bottom == nil then
       scope_opt.char_bottom = preset.char_bottom
+    end
+    if scope_opt.char_horizontal == nil then
+      scope_opt.char_horizontal = preset.char_horizontal
     end
   end
 

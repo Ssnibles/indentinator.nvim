@@ -419,16 +419,23 @@ local function render_line(buf, win, row)
     local passive_prev_col = nil
     local passive_text = nil
     local passive_hl = nil
+    local corner_arm_end = nil
     local active_win_col, active_char, active_hl = nil, nil, nil
 
     for col = width, max_col, width do
       local win_col = col - ctx.leftcol
       if win_col >= 0 then
-        local char, hl, active_guide = guide_style(ctx, col, line_1based, is_blank, in_scope_range)
+        local char, hl, active_guide, corner = guide_style(ctx, col, line_1based, is_blank, in_scope_range)
         if char and hl then
           if active_guide then
+            local arm = ctx.scope_cfg.char_horizontal
+            if corner and arm and arm ~= "" and target_width > col + 1 then
+              local arm_len = target_width - col - 1
+              char = char .. string.rep(arm, arm_len)
+              corner_arm_end = col + arm_len
+            end
             active_win_col, active_char, active_hl = win_col, char, hl
-          else
+          elseif not (corner_arm_end and col <= corner_arm_end) then
             local gap = passive_prev_col and (col - passive_prev_col - 1) or 0
             if passive_text and passive_hl == hl then
               passive_text = passive_text .. string.rep(" ", gap) .. char

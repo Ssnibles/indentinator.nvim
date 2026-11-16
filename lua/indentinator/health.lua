@@ -45,7 +45,10 @@ function M.check()
   )
   vim.health.info(("indent.hl=%s rainbow.enabled=%s"):format(tostring(ind_cfg.hl), tostring(rainbow_cfg.enabled)))
   vim.health.info(
-    ("scope.enabled=%s show_empty=%s rainbow=%s char=%q style=%q corners=%s (top=%q, bot=%q) treesitter=%s"):format(
+    (
+      "scope.enabled=%s show_empty=%s rainbow=%s char=%q style=%q corners=%s "
+      .. "(top=%q, bot=%q, horiz=%q) treesitter=%s"
+    ):format(
       tostring(scope_cfg.enabled),
       tostring(scope_cfg.show_empty),
       tostring(scope_cfg.rainbow),
@@ -54,6 +57,7 @@ function M.check()
       tostring(scope_cfg.corners),
       tostring(scope_cfg.char_top),
       tostring(scope_cfg.char_bottom),
+      tostring(scope_cfg.char_horizontal),
       tostring(scope_cfg.treesitter)
     )
   )

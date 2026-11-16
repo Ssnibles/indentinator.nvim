@@ -7,7 +7,7 @@ A lightweight, high-performance indentation and scope guides plugin for Neovim. 
 ## Features
 
 - **Standard Indentation Guides**: Renders vertical guide lines across all indentation steps (`col 2, col 4, col 6, ...`).
-- **Active Scope Highlighting & Preset Corners**: Dynamically highlights the active scope line with boundary corner connectors. Supports presets (`"sharp"`, `"round"`, `"double"`, `"bold"`).
+- **Active Scope Highlighting & Preset Corners**: Dynamically highlights the active scope line with boundary corner connectors whose horizontal arm reaches the body text. Supports presets (`"sharp"`, `"round"`, `"double"`, `"bold"`).
 - **Scope Navigation & Text Objects**: Motion API and commands to jump directly to top/bottom scope boundaries or visually select active scopes (`jump_to_scope_start`, `jump_to_scope_end`, `select_scope`).
 - **Memoized Scope Caching**: Automatic scope calculation caching per buffer change tick for zero-overhead cursor movement.
 - **Fine-Grained Blank Line Policies**: Configurable toggles (`indent.show_empty`, `scope.show_empty`) for blank line rendering.
@@ -154,6 +154,7 @@ require("indentinator").setup({
     char = "│",                 -- Active scope guide character
     char_top = "┌",             -- Top boundary corner character (overridden by preset)
     char_bottom = "└",          -- Bottom boundary corner character (overridden by preset)
+    char_horizontal = "─",      -- Horizontal arm used by top/bottom corners
     corners = true,             -- Render top/bottom boundary corner characters
     hl = "IndentinatorScope",   -- Highlight group for active scope guide
     hl_header = nil,            -- Optional highlight group for scope header line

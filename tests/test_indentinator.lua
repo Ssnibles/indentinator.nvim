@@ -86,14 +86,21 @@ local line3_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 2, 0 }, { 2,
 local line4_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 3, 0 }, { 3, -1 }, { details = true })
 
 assert_eq(#line3_marks > 0, true, "Line 3 (first scope body line) should have extmark")
-assert_eq(find_mark_with_text(line3_marks, "┌") ~= nil, true, "Line 3 should render top corner '┌'")
+local top_corner = find_mark_with_text(line3_marks, "┌")
+assert_eq(top_corner ~= nil, true, "Line 3 should render top corner '┌'")
+assert_eq(top_corner[4].virt_text[1][1], "┌───", "Top corner arm should reach the body text indent")
 
 assert_eq(#line4_marks > 0, true, "Line 4 (last scope body line) should have extmark")
-assert_eq(find_mark_with_text(line4_marks, "└") ~= nil, true, "Line 4 should render bottom corner '└'")
+local bottom_corner = find_mark_with_text(line4_marks, "└")
+assert_eq(bottom_corner ~= nil, true, "Line 4 should render bottom corner '└'")
+assert_eq(bottom_corner[4].virt_text[1][1], "└───", "Bottom corner arm should reach the body text indent")
 print("  ✓ Scope corner boundaries verified successfully.")
 
 -- 5. Test Rainbow Indent Colors
 print("[Test 5] Testing Rainbow Indent Color Extmarks...")
+-- Disable corners so the passive guide at col 4 is not covered by a corner arm.
+ind.update({ scope = { corners = false } })
+line3_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, { 2, 0 }, { 2, -1 }, { details = true })
 -- Line 3 has 6 spaces indent -> col 4 is level 2 -> uses IndentinatorRainbow2
 assert_eq(#line3_marks, 2, "Line 3 should have 2 extmarks")
 local rainbow_mark = nil
@@ -176,6 +183,7 @@ ind.setup({
 })
 assert_eq(ind.config.scope.char_top, "╭", "Round corner char_top failed")
 assert_eq(ind.config.scope.char_bottom, "╰", "Round corner char_bottom failed")
+assert_eq(ind.config.scope.char_horizontal, "─", "Round corner char_horizontal failed")
 
 ind.setup({
   scope = {
@@ -184,6 +192,7 @@ ind.setup({
 })
 assert_eq(ind.config.scope.char_top, "╔", "Double corner char_top failed")
 assert_eq(ind.config.scope.char_bottom, "╚", "Double corner char_bottom failed")
+assert_eq(ind.config.scope.char_horizontal, "═", "Double corner char_horizontal failed")
 print("  ✓ Corner style presets verified successfully.")
 
 -- 10. Test Scope Motions (jump_to_scope_start, jump_to_scope_end, select_scope)
