@@ -1,13 +1,13 @@
---- User commands registration for indentinator.nvim.
+--- User command registration for indentinator.nvim.
 
 local ind = require("indentinator")
 
 ind.setup()
 
---- Wraps a command callback in safe execution and notifies errors.
+--- Wraps a command callback so errors are reported instead of aborting.
 ---@param fn fun(opts: table) Command callback
 ---@return fun(opts: table) Wrapper function
-local function cmd(fn)
+local function notify_on_error(fn)
   return function(opts)
     local ok, err = pcall(fn, opts)
     if not ok then
@@ -16,128 +16,113 @@ local function cmd(fn)
   end
 end
 
-vim.api.nvim_create_user_command(
-  "IndentinatorEnable",
-  cmd(function()
-    ind.enable()
-  end),
-  { desc = "Enable indent & scope guides for current buffer" }
-)
+--- Defines a user command with error reporting.
+---@param name string Command name
+---@param desc string Command description
+---@param fn fun(opts: table)
+---@param opts table|nil Extra command options
+local function define(name, desc, fn, opts)
+  opts = opts or {}
+  opts.desc = desc
+  vim.api.nvim_create_user_command(name, notify_on_error(fn), opts)
+end
 
-vim.api.nvim_create_user_command(
-  "IndentinatorDisable",
-  cmd(function()
-    ind.disable()
-  end),
-  { desc = "Disable indent & scope guides for current buffer" }
-)
-
-vim.api.nvim_create_user_command(
-  "IndentinatorToggle",
-  cmd(function(opts)
-    if opts.bang then
-      local processed = {}
-      for _, win in ipairs(vim.api.nvim_list_wins()) do
-        local ok, buf = pcall(vim.api.nvim_win_get_buf, win)
-        if ok and buf and not processed[buf] then
-          processed[buf] = true
-          ind.toggle(buf)
-        end
-      end
-    else
-      ind.toggle()
+local function toggle_across_windows()
+  local seen = {}
+  vim.iter(vim.api.nvim_list_wins()):each(function(win)
+    local ok, buf = pcall(vim.api.nvim_win_get_buf, win)
+    if ok and buf and not seen[buf] then
+      seen[buf] = true
+      ind.toggle(buf)
     end
-  end),
-  { desc = "Toggle indent & scope guides (use ! to toggle across active buffers)", bang = true }
-)
+  end)
+end
 
--- The toggles below go through `ind.update()` so `finalize()` re-runs and the
--- memoized per-buffer resolved configs are invalidated, keeping buffers with
--- per-buffer overrides in sync with the global switches.
+define("IndentinatorEnable", "Enable indent & scope guides for current buffer", function()
+  ind.enable()
+end)
 
-vim.api.nvim_create_user_command(
-  "IndentinatorIndentToggle",
-  cmd(function()
-    local enabled = ind.config.indent.enabled ~= false
-    ind.update({ indent = { enabled = not enabled } })
-  end),
-  { desc = "Toggle standard indentation guides" }
-)
+define("IndentinatorDisable", "Disable indent & scope guides for current buffer", function()
+  ind.disable()
+end)
 
-vim.api.nvim_create_user_command(
-  "IndentinatorScopeToggle",
-  cmd(function()
-    local enabled = ind.config.scope.enabled ~= false
-    ind.update({ scope = { enabled = not enabled } })
-  end),
-  { desc = "Toggle active scope guide" }
-)
+define("IndentinatorToggle", "Toggle indent & scope guides (use ! for all active buffers)", function(opts)
+  if opts.bang then
+    toggle_across_windows()
+  else
+    ind.toggle()
+  end
+end, { bang = true })
 
-vim.api.nvim_create_user_command(
-  "IndentinatorRainbowToggle",
-  cmd(function()
-    local rainbow = ind.config.indent.rainbow or {}
-    ind.update({ indent = { rainbow = { enabled = rainbow.enabled ~= true } } })
-  end),
-  { desc = "Toggle rainbow indent guide colors" }
-)
+-- Toggles go through `ind.update()` so resolved per-buffer configs are invalidated.
 
-vim.api.nvim_create_user_command(
-  "IndentinatorCornersToggle",
-  cmd(function()
-    local corners = ind.config.scope.corners ~= false
-    ind.update({ scope = { corners = not corners } })
-  end),
-  { desc = "Toggle active scope boundary corners" }
-)
+local toggles = {
+  {
+    name = "IndentinatorIndentToggle",
+    desc = "Toggle standard indentation guides",
+    run = function()
+      ind.update({ indent = { enabled = ind.config.indent.enabled == false } })
+    end,
+  },
+  {
+    name = "IndentinatorScopeToggle",
+    desc = "Toggle active scope guide",
+    run = function()
+      ind.update({ scope = { enabled = ind.config.scope.enabled == false } })
+    end,
+  },
+  {
+    name = "IndentinatorRainbowToggle",
+    desc = "Toggle rainbow indent guide colours",
+    run = function()
+      local rainbow = ind.config.indent.rainbow or {}
+      ind.update({ indent = { rainbow = { enabled = rainbow.enabled ~= true } } })
+    end,
+  },
+  {
+    name = "IndentinatorCornersToggle",
+    desc = "Toggle active scope boundary corners",
+    run = function()
+      ind.update({ scope = { corners = ind.config.scope.corners == false } })
+    end,
+  },
+  {
+    name = "IndentinatorScopeRainbowToggle",
+    desc = "Toggle rainbow active scope line colours",
+    run = function()
+      ind.update({ scope = { rainbow = ind.config.scope.rainbow ~= true } })
+    end,
+  },
+  {
+    name = "IndentinatorDelimitersToggle",
+    desc = "Toggle scope boundary delimiter highlighting",
+    run = function()
+      local delimiters = ind.config.delimiters or {}
+      ind.update({ delimiters = { enabled = delimiters.enabled ~= true } })
+    end,
+  },
+  {
+    name = "IndentinatorDelimitersRainbowToggle",
+    desc = "Toggle rainbow scope boundary delimiter colours",
+    run = function()
+      local delimiters = ind.config.delimiters or {}
+      ind.update({ delimiters = { rainbow = delimiters.rainbow ~= true } })
+    end,
+  },
+}
 
-vim.api.nvim_create_user_command(
-  "IndentinatorScopeRainbowToggle",
-  cmd(function()
-    local rainbow = ind.config.scope.rainbow == true
-    ind.update({ scope = { rainbow = not rainbow } })
-  end),
-  { desc = "Toggle rainbow active scope line colors" }
-)
+for _, toggle in ipairs(toggles) do
+  define(toggle.name, toggle.desc, toggle.run)
+end
 
-vim.api.nvim_create_user_command(
-  "IndentinatorDelimitersToggle",
-  cmd(function()
-    local delimiters = ind.config.delimiters or {}
-    ind.update({ delimiters = { enabled = delimiters.enabled == false } })
-  end),
-  { desc = "Toggle scope boundary delimiter highlighting" }
-)
+define("IndentinatorJumpTop", "Jump cursor to top boundary of active scope", function()
+  ind.jump_to_scope_start()
+end)
 
-vim.api.nvim_create_user_command(
-  "IndentinatorDelimitersRainbowToggle",
-  cmd(function()
-    local delimiters = ind.config.delimiters or {}
-    ind.update({ delimiters = { rainbow = delimiters.rainbow ~= true } })
-  end),
-  { desc = "Toggle rainbow scope boundary delimiter colors" }
-)
+define("IndentinatorJumpBottom", "Jump cursor to bottom boundary of active scope", function()
+  ind.jump_to_scope_end()
+end)
 
-vim.api.nvim_create_user_command(
-  "IndentinatorJumpTop",
-  cmd(function()
-    ind.jump_to_scope_start()
-  end),
-  { desc = "Jump cursor to top boundary of active scope" }
-)
-
-vim.api.nvim_create_user_command(
-  "IndentinatorJumpBottom",
-  cmd(function()
-    ind.jump_to_scope_end()
-  end),
-  { desc = "Jump cursor to bottom boundary of active scope" }
-)
-
-vim.api.nvim_create_user_command(
-  "IndentinatorHealth",
-  cmd(function()
-    vim.cmd("checkhealth indentinator")
-  end),
-  { desc = "Run indentinator health check" }
-)
+define("IndentinatorHealth", "Run indentinator health check", function()
+  vim.cmd("checkhealth indentinator")
+end)
