@@ -608,7 +608,11 @@ function M.resolve_treesitter_scope(buf, _win, cursor_row, cursor_col, start_nod
 
   local child_ranges = collect_child_scope_ranges(scope_node, lang, cfg)
   local first_body_line, last_body_line = find_first_last_scope_lines(buf, scope_start, scope_end, active_col, tabstop)
-  local delims = get_boundary_delimiters(buf, scope_node, s_row, e_row, true, lang_tree)
+  local delim_cfg = cfg.delimiters or {}
+  local delims = {}
+  if delim_cfg.enabled ~= false then
+    delims = get_boundary_delimiters(buf, scope_node, s_row, e_row, delim_cfg.keywords ~= false, lang_tree)
+  end
 
   ---@type indentinator.ScopeInfo
   return {

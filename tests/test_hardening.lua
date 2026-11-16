@@ -126,6 +126,11 @@ if has_md and has_lua then
     end
   end
   assert_eq(on_if_line, true, "keyword delimiters on the injected `if` line should be found")
+
+  ind.setup({ debounce_ms = 0, delimiters = { enabled = true, keywords = false } })
+  local no_keywords = treesitter.resolve_treesitter_scope(md, win, 6, 4)
+  assert_eq(#no_keywords.delimiter_spans, 0, "delimiters.keywords = false must suppress keyword spans")
+  ind.setup({ debounce_ms = 0, delimiters = { enabled = true, keywords = true } })
 end
 pcall(vim.api.nvim_buf_delete, md, { force = true })
 print("  ✓ Injection-aware delimiter resolution verified.")
