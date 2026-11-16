@@ -1,8 +1,10 @@
---- Scope memoization, cursor position tracking, and buffer dirty state management.
+--- Per-window scope memoization, dirty state, viewport ranges, and debounce timers.
 --- The steady-state cursor fast path allocates nothing; allocations only occur
 --- when the active scope actually changes.
 ---@class indentinator.cache
 local M = {}
+
+local uv = vim.uv
 
 ---@class indentinator.ScopeInfo
 ---@field scope_start integer 1-indexed start row of scope
@@ -22,28 +24,29 @@ local M = {}
 ---@class indentinator.WinCacheEntry
 ---@field buf integer Buffer handle
 ---@field tick integer Buffer changedtick at calculation time
----@field cursor_row integer 1-indexed cursor row
----@field cursor_col integer 0-indexed cursor column
 ---@field scope indentinator.ScopeInfo|nil Cached scope info
 
---- Per-window active scope cache
+--- Per-window active scope cache.
 ---@type table<integer, indentinator.WinCacheEntry>
 M.win_cache = {}
 
---- Per-buffer bookkeeping exposed through the `state.cache` facade.
---- The authoritative scope memoization lives in `M.win_cache`.
----@type table<integer, table>
-M.buf_cache = {}
-
---- Dirty buffers tracking (marked true on on_bytes)
+--- Buffers whose tree may be stale after an edit.
 ---@type table<integer, boolean>
 M.buf_dirty = {}
 
---- Attached buffers tracking
+--- Buffers with an active `nvim_buf_attach` listener.
 ---@type table<integer, boolean>
 M.buf_attached = {}
 
---- Checks whether a buffer is attached.
+--- Debounce timers keyed by window.
+---@type table<integer, userdata>
+M.timers = {}
+
+--- Viewport ranges last painted in each window.
+---@type table<integer, { buf: integer, start_line: integer, end_line: integer }>
+M.rendered = {}
+
+--- Checks whether a buffer has an attach listener.
 ---@param buf integer Buffer handle
 ---@return boolean
 function M.is_attached(buf)
@@ -56,25 +59,13 @@ function M.mark_attached(buf)
   M.buf_attached[buf] = true
 end
 
---- Compatibility state table for backwards compatibility.
----
---- `rendered` is keyed by window and stores `{ buf, start_line, end_line }`.
---- Viewport ranges are tracked per window because extmarks are buffer-scoped
---- while the painted lines are chosen per window: sharing one range per buffer
---- let one window's range overwrite another's and could leave stale marks.
-M.state = {
-  cache = M.buf_cache,
-  timers = {},
-  rendered = {},
-}
-
 --- Records the viewport range most recently painted in a window.
 ---@param win integer Window handle
 ---@param buf integer Buffer handle
 ---@param start_line integer 1-indexed first painted line
 ---@param end_line integer 1-indexed last painted line
 function M.set_rendered(win, buf, start_line, end_line)
-  M.state.rendered[win] = { buf = buf, start_line = start_line, end_line = end_line }
+  M.rendered[win] = { buf = buf, start_line = start_line, end_line = end_line }
 end
 
 --- Returns the previously painted viewport range for a window/buffer pair.
@@ -83,7 +74,7 @@ end
 ---@return integer|nil start_line 1-indexed first painted line
 ---@return integer|nil end_line 1-indexed last painted line
 function M.get_rendered(win, buf)
-  local entry = M.state.rendered[win]
+  local entry = M.rendered[win]
   if entry and entry.buf == buf then
     return entry.start_line, entry.end_line
   end
@@ -93,9 +84,9 @@ end
 --- Drops painted-range bookkeeping for every window showing a buffer.
 ---@param buf integer Buffer handle
 function M.clear_rendered_buf(buf)
-  for win, entry in pairs(M.state.rendered) do
+  for win, entry in pairs(M.rendered) do
     if entry.buf == buf then
-      M.state.rendered[win] = nil
+      M.rendered[win] = nil
     end
   end
 end
@@ -105,7 +96,7 @@ end
 ---@param win integer Window handle
 ---@param buf integer Buffer handle
 ---@param cursor_row integer 1-indexed cursor row
----@param cursor_col integer 0-indexed cursor column
+---@param _cursor_col integer 0-indexed cursor column (unused; kept for call-site stability)
 ---@return boolean in_scope True if cursor remains inside the active scope node
 function M.is_cursor_in_scope(win, buf, cursor_row, _cursor_col)
   local entry = M.win_cache[win]
@@ -118,21 +109,18 @@ function M.is_cursor_in_scope(win, buf, cursor_row, _cursor_col)
     return false
   end
 
-  -- Invalidate if buffer changed
   local tick = vim.api.nvim_buf_get_changedtick(buf)
   if entry.tick ~= tick or M.buf_dirty[buf] then
     return false
   end
 
   local r = cursor_row - 1
-  -- Check if cursor exited the active node bounds
   if r < s.s_row or r > s.e_row then
     return false
   end
 
-  -- Check if cursor entered any child scope
   local children = s.child_ranges
-  if children and #children > 0 then
+  if children then
     for i = 1, #children do
       local cr = children[i]
       if r >= cr[1] and r <= cr[2] then
@@ -151,8 +139,7 @@ end
 function M.get_win_scope(win, buf)
   local entry = M.win_cache[win]
   if entry and entry.buf == buf and not M.buf_dirty[buf] then
-    local tick = vim.api.nvim_buf_get_changedtick(buf)
-    if entry.tick == tick then
+    if entry.tick == vim.api.nvim_buf_get_changedtick(buf) then
       return entry.scope
     end
   end
@@ -162,35 +149,16 @@ end
 --- Stores the active scope info in the per-window cache.
 ---@param win integer Window handle
 ---@param buf integer Buffer handle
----@param cursor_row integer 1-indexed cursor row
----@param cursor_col integer 0-indexed cursor col
 ---@param scope indentinator.ScopeInfo|nil
-function M.set_win_scope(win, buf, cursor_row, cursor_col, scope)
+function M.set_win_scope(win, buf, scope)
   local tick = vim.api.nvim_buf_get_changedtick(buf)
   local entry = M.win_cache[win]
-  if not entry then
-    entry = {
-      buf = buf,
-      tick = tick,
-      cursor_row = cursor_row,
-      cursor_col = cursor_col,
-      scope = scope,
-    }
-    M.win_cache[win] = entry
-  else
+  if entry then
     entry.buf = buf
     entry.tick = tick
-    entry.cursor_row = cursor_row
-    entry.cursor_col = cursor_col
     entry.scope = scope
-  end
-
-  -- Maintain a per-buffer entry for the public `state.cache` facade. The
-  -- authoritative memoization lives in `M.win_cache`; this only records the
-  -- buffer's latest changedtick so external checks can confirm it is populated.
-  local bc = M.buf_cache[buf]
-  if not bc or bc._tick ~= tick then
-    M.buf_cache[buf] = { _tick = tick }
+  else
+    M.win_cache[win] = { buf = buf, tick = tick, scope = scope }
   end
 end
 
@@ -198,7 +166,6 @@ end
 ---@param buf integer Buffer handle
 function M.mark_dirty(buf)
   M.buf_dirty[buf] = true
-  M.buf_cache[buf] = nil
 end
 
 --- Checks whether a buffer is marked as dirty.
@@ -208,26 +175,42 @@ function M.is_dirty(buf)
   return M.buf_dirty[buf] == true
 end
 
---- Clears dirty flag once buffer has been parsed and processed.
+--- Clears the dirty flag once the buffer has been parsed.
 ---@param buf integer Buffer handle
 function M.mark_clean(buf)
   M.buf_dirty[buf] = nil
 end
 
---- Cleans tracking state and cached scopes associated with a buffer.
----@param buf integer|nil Buffer handle (nil cleans all)
-function M.clear_buf(buf)
-  if not buf then
-    M.buf_cache = {}
-    M.state.cache = M.buf_cache
-    M.buf_dirty = {}
-    M.buf_attached = {}
-    M.win_cache = {}
-    M.state.rendered = {}
+--- Starts or restarts the debounce timer for a window.
+---@param win integer Window handle
+---@param delay integer Delay in milliseconds
+---@param fn fun() Callback, scheduled on the main loop
+function M.debounce(win, delay, fn)
+  local timer = M.timers[win]
+  if timer then
+    pcall(timer.stop, timer)
+  else
+    timer = uv.new_timer()
+    M.timers[win] = timer
+  end
+  timer:start(delay, 0, vim.schedule_wrap(fn))
+end
+
+--- Stops and closes a window's debounce timer.
+---@param win integer Window handle
+function M.stop_timer(win)
+  local timer = M.timers[win]
+  if not timer then
     return
   end
+  M.timers[win] = nil
+  pcall(timer.stop, timer)
+  pcall(timer.close, timer)
+end
 
-  M.buf_cache[buf] = nil
+--- Cleans tracking state and cached scopes associated with a buffer.
+---@param buf integer Buffer handle
+function M.clear_buf(buf)
   M.buf_dirty[buf] = nil
   M.buf_attached[buf] = nil
 
@@ -240,27 +223,16 @@ function M.clear_buf(buf)
   M.clear_rendered_buf(buf)
 end
 
---- Cleans tracking state and timer associated with a window.
+--- Cleans tracking state and the debounce timer associated with a window.
 ---@param win integer Window handle
 function M.clear_win(win)
   M.win_cache[win] = nil
-  M.state.rendered[win] = nil
-  local timer = M.state.timers[win]
-  if timer then
-    pcall(function()
-      timer:stop()
-    end)
-    pcall(function()
-      timer:close()
-    end)
-    M.state.timers[win] = nil
-  end
+  M.rendered[win] = nil
+  M.stop_timer(win)
 end
 
---- Clears all scope caches across all buffers and windows.
+--- Invalidates all memoized scopes and dirty markers.
 function M.clear()
-  M.buf_cache = {}
-  M.state.cache = M.buf_cache
   M.win_cache = {}
   M.buf_dirty = {}
 end

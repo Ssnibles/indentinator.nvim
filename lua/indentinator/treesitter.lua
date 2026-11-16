@@ -888,11 +888,11 @@ function M.get_scope(buf, win, use_treesitter)
   end
 
   if scope and scope.scope_start and scope.scope_end and scope.active_col >= 0 then
-    cache.set_win_scope(win, buf, cursor_row, cursor_col, scope)
+    cache.set_win_scope(win, buf, scope)
     return scope.scope_start, scope.scope_end, scope.active_col, scope.node
   end
 
-  cache.set_win_scope(win, buf, cursor_row, cursor_col, nil)
+  cache.set_win_scope(win, buf, nil)
   return nil, nil, nil, nil
 end
 

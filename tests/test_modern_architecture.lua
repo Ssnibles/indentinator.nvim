@@ -10,7 +10,7 @@ print("=== Running Modern Indentinator Architecture Tests ===")
 local ind = require("indentinator")
 local cache = require("indentinator.cache")
 local treesitter = require("indentinator.treesitter")
-local renderer = require("indentinator.renderer")
+local render = require("indentinator.render")
 
 ind.setup({
   debounce_ms = 0,
@@ -42,15 +42,15 @@ local win = vim.api.nvim_get_current_win()
 vim.api.nvim_win_set_buf(win, buf)
 vim.api.nvim_win_set_cursor(win, { 3, 4 })
 ind.enable(buf)
-renderer.render(buf, win)
+render.render(buf, win)
 
 -- Enabling must paint guides for the visible viewport.
-local viewport_marks = vim.api.nvim_buf_get_extmarks(buf, renderer.NS, 0, -1, {})
+local viewport_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, 0, -1, {})
 assert_eq(#viewport_marks > 0, true, "Enabling must render viewport guides")
 
 -- Clearing the namespace must leave no residual marks (no ghost marks).
-renderer.clear(buf)
-local cleared_marks = vim.api.nvim_buf_get_extmarks(buf, renderer.NS, 0, -1, {})
+render.clear(buf)
+local cleared_marks = vim.api.nvim_buf_get_extmarks(buf, render.NS, 0, -1, {})
 assert_eq(#cleared_marks, 0, "clear() must remove all namespace extmarks")
 print("  ✓ Viewport rendering & namespace clearing verified.")
 
@@ -149,7 +149,7 @@ ind.enable(big_buf)
 
 assert_eq(vim.api.nvim_buf_line_count(big_buf) > ind.config.max_file_lines, true, "Big buffer exceeds max lines")
 ind.force_update()
-local big_marks = vim.api.nvim_buf_get_extmarks(big_buf, renderer.NS, 0, -1, {})
+local big_marks = vim.api.nvim_buf_get_extmarks(big_buf, render.NS, 0, -1, {})
 assert_eq(#big_marks, 0, "Exceeding max_file_lines must produce 0 extmarks")
 
 pcall(vim.api.nvim_buf_delete, big_buf, { force = true })
@@ -168,7 +168,7 @@ vim.api.nvim_set_option_value("tabstop", 2, { buf = grow_buf })
 vim.api.nvim_win_set_buf(win, grow_buf)
 ind.enable(grow_buf)
 assert_eq(
-  #vim.api.nvim_buf_get_extmarks(grow_buf, renderer.NS, 0, -1, {}) > 0,
+  #vim.api.nvim_buf_get_extmarks(grow_buf, render.NS, 0, -1, {}) > 0,
   true,
   "A buffer below max_file_lines should render guides"
 )
@@ -182,7 +182,7 @@ vim.api.nvim_buf_set_lines(grow_buf, 40, -1, false, grown_lines)
 assert_eq(vim.api.nvim_buf_line_count(grow_buf) > ind.config.max_file_lines, true, "Grown buffer exceeds max lines")
 ind.force_update()
 assert_eq(
-  #vim.api.nvim_buf_get_extmarks(grow_buf, renderer.NS, 0, -1, {}),
+  #vim.api.nvim_buf_get_extmarks(grow_buf, render.NS, 0, -1, {}),
   0,
   "Exceeding max_file_lines must clear previously rendered extmarks"
 )

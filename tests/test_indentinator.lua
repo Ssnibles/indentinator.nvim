@@ -240,8 +240,8 @@ ind.enable(cache_buf)
 
 local s1 = ind.get_current_scope(cache_buf, win)
 assert_eq(s1 ~= nil, true, "First get_current_scope failed")
-local state_ref = require("indentinator.state")
-assert_eq(state_ref.state.cache[cache_buf] ~= nil, true, "Cache entry should exist for cache_buf")
+local cache = require("indentinator.cache")
+assert_eq(cache.get_win_scope(win, cache_buf) ~= nil, true, "Cache entry should exist for cache_buf")
 
 pcall(vim.api.nvim_buf_delete, cache_buf, { force = true })
 print("  ✓ Scope memoization cache verified successfully.")

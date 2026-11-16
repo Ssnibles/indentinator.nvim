@@ -7,7 +7,7 @@ local M = {}
 local config = require("indentinator.config")
 local cache = require("indentinator.cache")
 local treesitter = require("indentinator.treesitter")
-local renderer = require("indentinator.renderer")
+local render = require("indentinator.render")
 local motion = require("indentinator.motion")
 local hooks = require("indentinator.hooks")
 
@@ -16,28 +16,30 @@ local nvim_get_current_win = api.nvim_get_current_win
 local nvim_get_current_buf = api.nvim_get_current_buf
 local nvim_win_get_buf = api.nvim_win_get_buf
 local nvim_win_is_valid = api.nvim_win_is_valid
+local nvim_buf_is_valid = api.nvim_buf_is_valid
 local nvim_buf_is_loaded = api.nvim_buf_is_loaded
 local nvim_list_wins = api.nvim_list_wins
-local uv = vim.uv
 
 local AUGROUP = "Indentinator"
 
---- Active plugin configuration reference
+--- Active plugin configuration reference.
 ---@type indentinator.Config
 M.config = config.values
 
 --- Available hook type names for `register_hook`.
 M.hook_types = hooks.type
 
---- Helper function to iterate active valid windows using vim.iter.
+--- Runs `fn(buf, win)` for every valid window showing a loaded buffer.
 ---@param fn fun(win: integer, buf: integer)
-local function for_each_active_win(fn)
-  vim.iter(nvim_list_wins()):filter(nvim_win_is_valid):each(function(win)
-    local ok_b, buf = pcall(nvim_win_get_buf, win)
-    if ok_b and buf and nvim_buf_is_loaded(buf) then
-      fn(win, buf)
+local function for_each_window(fn)
+  for _, win in ipairs(nvim_list_wins()) do
+    if nvim_win_is_valid(win) then
+      local ok, buf = pcall(nvim_win_get_buf, win)
+      if ok and buf and nvim_buf_is_loaded(buf) then
+        fn(win, buf)
+      end
     end
-  end)
+  end
 end
 
 --- Runs `fn(buf, win)` for the current window when guides are enabled for its buffer.
@@ -47,157 +49,149 @@ local function with_current_buffer(fn)
   if not nvim_win_is_valid(win) then
     return
   end
-  local ok_b, buf = pcall(nvim_win_get_buf, win)
-  if ok_b and buf and config.is_enabled(buf) then
+  local ok, buf = pcall(nvim_win_get_buf, win)
+  if ok and buf and config.is_enabled(buf) then
     fn(buf, win)
   end
 end
 
---- Per-window debounced scope update and viewport render.
---- Checks cache first: if the cursor is still within the active scope node, avoids all work.
+--- Attaches Treesitter and repaints every window showing a buffer, or clears it
+--- when rendering is disabled. Used by FileType and OptionSet autocmds.
+---@param buf integer|nil Buffer handle
+local function refresh_buf(buf)
+  if not buf or not nvim_buf_is_loaded(buf) then
+    return
+  end
+  if config.is_enabled(buf) then
+    treesitter.attach_buffer(buf)
+    render.render_all(buf)
+  else
+    render.clear(buf)
+  end
+end
+
+--- Repaints the buffer in `win` unless the cursor is still inside the active scope.
 ---@param buf integer Buffer handle
 ---@param win integer Window handle
-local function debounced_cursor_moved(buf, win)
+local function render_after_cursor_move(buf, win)
   if not nvim_win_is_valid(win) or not nvim_buf_is_loaded(buf) then
     return
   end
-
+  local ok, win_buf = pcall(nvim_win_get_buf, win)
+  if not ok or win_buf ~= buf then
+    return
+  end
   local cursor = api.nvim_win_get_cursor(win)
-  -- Fast path: if the cursor did not leave the active scope node, do nothing.
+  if not cache.is_cursor_in_scope(win, buf, cursor[1], cursor[2]) then
+    render.render(buf, win)
+  end
+end
+
+--- Debounces a repaint when the cursor leaves the cached active scope.
+---@param buf integer Buffer handle
+---@param win integer Window handle
+local function on_cursor_moved(buf, win)
+  if not nvim_win_is_valid(win) or not nvim_buf_is_loaded(buf) then
+    return
+  end
+  local cursor = api.nvim_win_get_cursor(win)
   if cache.is_cursor_in_scope(win, buf, cursor[1], cursor[2]) then
     return
   end
 
   local delay = config.get(buf).debounce_ms or 0
   if delay <= 0 then
-    renderer.render(buf, win)
-    return
-  end
-
-  local timer = cache.state.timers[win]
-  if timer then
-    pcall(function()
-      timer:stop()
-    end)
+    render.render(buf, win)
   else
-    timer = uv.new_timer()
-    cache.state.timers[win] = timer
-  end
-
-  timer:start(
-    delay,
-    0,
-    vim.schedule_wrap(function()
-      if nvim_win_is_valid(win) and nvim_buf_is_loaded(buf) then
-        local c = api.nvim_win_get_cursor(win)
-        if not cache.is_cursor_in_scope(win, buf, c[1], c[2]) then
-          renderer.render(buf, win)
-        end
-      end
+    cache.debounce(win, delay, function()
+      render_after_cursor_move(buf, win)
     end)
-  )
+  end
 end
 
 --- Registers autocommands for cursor movements, buffer lifecycle, and window resizes.
 local function setup_autocmds()
   api.nvim_create_augroup(AUGROUP, { clear = true })
 
-  -- Cursor movement updates active scope guide (fast debounced check)
   api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
     group = AUGROUP,
     callback = function()
-      with_current_buffer(debounced_cursor_moved)
+      with_current_buffer(on_cursor_moved)
     end,
   })
 
-  -- Window focus, buffer attach, and view changes
   api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
     group = AUGROUP,
     callback = function()
       with_current_buffer(function(buf, win)
         treesitter.attach_buffer(buf)
-        renderer.render(buf, win)
+        render.render(buf, win)
       end)
     end,
   })
 
-  -- Filetype changes (lazy detection, :setf, etc.) may add or remove a buffer
-  -- from the exclusion list, so re-evaluate rendering.
   api.nvim_create_autocmd("FileType", {
     group = AUGROUP,
     callback = function(e)
-      if not e.buf or not nvim_buf_is_loaded(e.buf) then
-        return
-      end
-      if config.is_enabled(e.buf) then
-        treesitter.attach_buffer(e.buf)
-        renderer.render_all(e.buf)
-      else
-        renderer.clear(e.buf)
-      end
+      refresh_buf(e.buf)
     end,
   })
 
-  -- Indentation-relevant buffer options changed at runtime.
   api.nvim_create_autocmd("OptionSet", {
     group = AUGROUP,
     pattern = { "shiftwidth", "tabstop", "expandtab", "list", "listchars" },
     callback = function(e)
-      local buf = (e.buf and e.buf ~= 0) and e.buf or nvim_get_current_buf()
-      if not buf or not nvim_buf_is_loaded(buf) then
-        return
-      end
-      if config.is_enabled(buf) then
-        renderer.render_all(buf)
-      else
-        renderer.clear(buf)
-      end
+      refresh_buf((e.buf and e.buf ~= 0) and e.buf or nvim_get_current_buf())
     end,
   })
 
-  -- Window scrolling or resizing
   api.nvim_create_autocmd({ "WinScrolled", "WinResized", "VimResized" }, {
     group = AUGROUP,
     callback = function()
-      with_current_buffer(renderer.render)
+      with_current_buffer(render.render)
     end,
   })
 
-  -- Clean up state and timer when window closes
   api.nvim_create_autocmd("WinClosed", {
     group = AUGROUP,
     callback = function(e)
       local win = tonumber(e.match)
       if win then
         cache.clear_win(win)
-        renderer.clear_win(win)
+        render.clear_win(win)
       end
     end,
   })
 
-  -- Clean up state when buffer unloads/deletes
   api.nvim_create_autocmd({ "BufDelete", "BufUnload", "BufWipeout" }, {
     group = AUGROUP,
     callback = function(e)
       if e.buf then
         cache.clear_buf(e.buf)
         config.clear_buffer(e.buf)
-        renderer.clear(e.buf)
+        render.clear(e.buf)
       end
     end,
   })
 
-  -- Re-initialise highlights on colorscheme change
   api.nvim_create_autocmd("ColorScheme", {
     group = AUGROUP,
     callback = function()
-      renderer.set_hl()
-      renderer.clear_virt_text_cache()
-      for_each_active_win(function(win, buf)
-        renderer.render(buf, win)
+      render.set_hl()
+      render.clear_virt_text_cache()
+      for_each_window(function(win, buf)
+        render.render(buf, win)
       end)
     end,
   })
+end
+
+--- Attaches Treesitter and renders every window with a loaded buffer.
+local function render_all_windows()
+  for_each_window(function(win, buf)
+    treesitter.attach_buffer(buf)
+    render.render(buf, win)
+  end)
 end
 
 --- Configures and initialises indentinator.nvim.
@@ -205,7 +199,7 @@ end
 function M.setup(opts)
   config.setup(opts)
   M.config = config.values
-  renderer.set_hl()
+  render.set_hl()
   cache.clear()
 
   if not M._setup_done then
@@ -213,10 +207,7 @@ function M.setup(opts)
     setup_autocmds()
   end
 
-  for_each_active_win(function(win, buf)
-    treesitter.attach_buffer(buf)
-    renderer.render(buf, win)
-  end)
+  render_all_windows()
 end
 
 --- Registers a rendering hook and refreshes the display.
@@ -239,7 +230,7 @@ end
 function M.update(opts)
   config.update(opts)
   M.config = config.values
-  renderer.set_hl()
+  render.set_hl()
   M.force_update()
 end
 
@@ -250,11 +241,7 @@ function M.set_buffer_config(opts, buf)
   buf = buf or nvim_get_current_buf()
   config.set_buffer(buf, opts)
   cache.clear_buf(buf)
-  if config.is_enabled(buf) then
-    renderer.render_all(buf)
-  else
-    renderer.clear(buf)
-  end
+  refresh_buf(buf)
 end
 
 --- Returns a deep copy of the resolved configuration for a buffer.
@@ -274,8 +261,7 @@ function M.enable(buf)
   buf = buf or nvim_get_current_buf()
   config.update_buffer(buf, { enabled = true })
   cache.clear_buf(buf)
-  treesitter.attach_buffer(buf)
-  renderer.render_all(buf)
+  refresh_buf(buf)
 end
 
 --- Disables scope guide rendering for a buffer.
@@ -283,7 +269,7 @@ end
 function M.disable(buf)
   buf = buf or nvim_get_current_buf()
   config.update_buffer(buf, { enabled = false })
-  renderer.clear(buf)
+  render.clear(buf)
 end
 
 --- Toggles scope guide rendering for a buffer.
@@ -306,14 +292,12 @@ function M.is_enabled(buf)
 end
 
 --- Forces an update across active windows.
---- Invalidates memoized per-buffer config so in-place global mutations are
---- picked up even by buffers that carry their own overrides.
+--- Invalidates memoized scope and per-buffer configuration so in-place global
+--- mutations are picked up even by buffers that carry their own overrides.
 function M.force_update()
   cache.clear()
   config.clear_resolved()
-  for_each_active_win(function(win, buf)
-    renderer.render(buf, win)
-  end)
+  render_all_windows()
 end
 
 --- Retrieves active scope info for a buffer and window.
@@ -322,27 +306,25 @@ end
 ---@return table|nil Scope info `{ scope_start, scope_end, active_col }` or nil
 function M.get_current_scope(buf, win)
   win = win or nvim_get_current_win()
-  if not win or not nvim_win_is_valid(win) then
-    return nil
-  end
-  if not buf then
-    local ok_b, b = pcall(nvim_win_get_buf, win)
-    buf = ok_b and b or nil
-  end
-  if not buf or not api.nvim_buf_is_valid(buf) or not nvim_buf_is_loaded(buf) then
+  if not nvim_win_is_valid(win) then
     return nil
   end
 
-  local use_ts = config.get(buf).scope.treesitter
-  local start_row, end_row, active_col = treesitter.get_scope(buf, win, use_ts)
-  if start_row and end_row then
-    return {
-      scope_start = start_row,
-      scope_end = end_row,
-      active_col = active_col,
-    }
+  buf = buf or nvim_win_get_buf(win)
+  if not buf or not nvim_buf_is_valid(buf) or not nvim_buf_is_loaded(buf) then
+    return nil
   end
-  return nil
+
+  local start_row, end_row, active_col = treesitter.get_scope(buf, win, config.get(buf).scope.treesitter)
+  if not start_row or not end_row then
+    return nil
+  end
+
+  return {
+    scope_start = start_row,
+    scope_end = end_row,
+    active_col = active_col,
+  }
 end
 
 --- Jumps cursor to top boundary of active scope (or parent scope if already at top).

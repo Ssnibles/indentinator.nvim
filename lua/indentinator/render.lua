@@ -263,10 +263,10 @@ function M.prepare_win_context(win, buf, toprow, botrow, total_lines)
         s = treesitter.resolve_indent_scope(buf, win, cursor[1])
       end
       if s then
-        cache.set_win_scope(win, buf, cursor[1], cursor[2], s)
+        cache.set_win_scope(win, buf, s)
         ctx.scope = s
       else
-        cache.set_win_scope(win, buf, cursor[1], cursor[2], nil)
+        cache.set_win_scope(win, buf, nil)
         ctx.scope = nil
       end
     end
